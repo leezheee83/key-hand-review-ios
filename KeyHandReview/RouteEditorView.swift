@@ -11,8 +11,7 @@ struct RouteEditorView: View {
     @State private var action = ""
     @State private var customAction = ""
     @State private var amount = ""
-    @State private var showInsertSheet = false
-    @State private var insertIndex = 0
+    @State private var sheetTarget: RouteActionSheetTarget?
 
     private let templates = [
         ("open", "Hero open"),
@@ -27,13 +26,7 @@ struct RouteEditorView: View {
             if let hand = store.hand(id: handID) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("补行动路线")
-                                .font(.largeTitle.bold())
-                            Text("闪记已保存。路线可分街补充，随时返回，不会丢失。")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
+                        header
 
                         Picker("街", selection: $street) {
                             ForEach(StreetKey.allCases) { key in
@@ -44,21 +37,12 @@ struct RouteEditorView: View {
 
                         if street == .preflop {
                             preflopTemplates(hand)
-                            preflopBreakdown(hand)
                         } else {
                             boardPanel(hand)
                         }
 
-                        actionOrderPanel(hand)
-
-                        CardPanel {
-                            SectionTitle(title: "本街路线")
-                            Text(PokerLogic.routeText(hand.streets[street]?.actions ?? [], session: store.session))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        actionPanel(hand)
+                        actionConsole(hand)
+                        routePreview(hand)
 
                         Button {
                             next(hand)
@@ -80,35 +64,27 @@ struct RouteEditorView: View {
                         Button("查看回放") { path.append(.detail(hand.id)) }
                     }
                 }
-                .sheet(isPresented: $showInsertSheet) {
+                .sheet(item: $sheetTarget) { target in
                     if let latest = store.hand(id: handID) {
-                        InsertActionSheet(
+                        RouteActionMutationSheet(
                             session: store.session,
                             hand: latest,
-                            street: street,
-                            actorOptions: actorOptions(latest),
-                            actionOptions: actionOptions,
-                            initialActor: PokerLogic.predictedActorForInsertion(at: insertIndex, hand: latest, street: street)
-                        ) { insertedActor, insertedAction, insertedAmountBB, shouldRecalculate in
-                            insertAction(
-                                hand: latest,
-                                index: insertIndex,
-                                actor: insertedActor,
-                                action: insertedAction,
-                                amountBB: insertedAmountBB,
-                                shouldRecalculate: shouldRecalculate
-                            )
+                            target: target,
+                            actionOptions: mutationActionOptions
+                        ) { actor, action, amountBB in
+                            applyMutation(target, hand: latest, actor: actor, action: action, amountBB: amountBB)
                         }
                     }
                 }
                 .onAppear {
                     if actor.isEmpty { syncActor(with: hand) }
-                    if action.isEmpty { action = actionOptions.first ?? "call" }
+                    syncActionChoice(with: hand)
                 }
                 .onChange(of: street) { _ in
-                    let hand = store.hand(id: handID)
-                    if let hand { syncActor(with: hand) }
-                    action = actionOptions.first ?? action
+                    if let latest = store.hand(id: handID) {
+                        syncActor(with: latest)
+                        syncActionChoice(with: latest)
+                    }
                     amount = ""
                     customAction = ""
                 }
@@ -119,110 +95,27 @@ struct RouteEditorView: View {
         }
     }
 
-    private func actionOrderPanel(_ hand: PokerHand) -> some View {
-        let order = PokerLogic.actionOrder(for: hand, street: street)
-
-        return CardPanel {
-            SectionTitle(title: "行动顺序", subtitle: street == .preflop ? "翻前按位置 / straddle 自动推；Hero 只高亮，不再默认从 Hero 开始。" : "翻后从庄位左手边第一个仍在牌中的玩家开始。")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(order, id: \.self) { position in
-                        Text(orderLabel(position, hand: hand))
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(actor == position ? .white : (position == hand.heroPosition ? .blue : .primary))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(actor == position ? Color.blue : Color.appSecondaryBackground)
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("当前行动")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(PokerLogic.positionLabel(actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor))
-                        .font(.headline)
-                        .foregroundStyle(actor == hand.heroPosition ? .blue : .primary)
-                }
-
-                Spacer()
-
-                Menu("改当前玩家") {
-                    ForEach(actorOptions(hand), id: \.self) { position in
-                        Button(PokerLogic.positionLabel(position)) {
-                            actor = position
-                        }
-                    }
-                }
-                .font(.footnote.weight(.semibold))
-            }
-
-            HStack {
-                Button("用系统推荐") {
-                    syncActor(with: hand)
-                }
-                .buttonStyle(.bordered)
-
-                Button("跳过这位") {
-                    actor = PokerLogic.nextActor(after: actor, hand: hand, street: street)
-                }
-                .buttonStyle(.bordered)
-            }
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("补行动路线")
+                .font(.largeTitle.bold())
+            Text("按行动顺序推进；路线文本会自动生成。漏记时点路线里的动作插入或修正。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
     private func preflopTemplates(_ hand: PokerHand) -> some View {
         CardPanel {
-            SectionTitle(title: "翻前结构（可选）", subtitle: selectedTemplate == "custom" ? "自定义不会预填行动；从下方逐条记录即可。" : "点一次生成常见路线；复杂局面也可随时逐条补充。")
+            SectionTitle(
+                title: "翻前结构（可选）",
+                subtitle: selectedTemplate == "custom" ? "自定义不会预填行动；直接从行动顺序开始记录。" : "可先生成常见结构，再在下方按顺序修正。"
+            )
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
                 ForEach(templates, id: \.0) { key, label in
                     PillButton(title: label, selected: selectedTemplate == key) {
                         applyTemplate(key, hand: hand)
                     }
-                }
-            }
-        }
-    }
-
-    private func preflopBreakdown(_ hand: PokerHand) -> some View {
-        let actions = hand.streets[.preflop]?.actions ?? []
-        let heroIndex = actions.firstIndex { $0.hero }
-        let before = heroIndex.map { Array(actions.prefix($0)) } ?? actions
-        let heroAction = heroIndex.map { actions[$0] }
-        let after = heroIndex.map { Array(actions.suffix(from: $0 + 1)) } ?? []
-
-        return CardPanel {
-            SectionTitle(title: "路线拆解")
-            routeBlock(title: "① 前序行动", actions: before, empty: "无人先行动，或前序行动待补。")
-            if let heroAction {
-                Text("② Hero 决策")
-                    .font(.subheadline.weight(.semibold))
-                Text(PokerLogic.actionText(heroAction, session: store.session))
-                    .font(.subheadline)
-                    .foregroundStyle(.blue)
-            } else {
-                routeBlock(title: "② Hero 决策", actions: [], empty: "待记录：可追加 Hero 的 call、raise、fold 或行动尺度。")
-            }
-            routeBlock(title: "③ 后续行动", actions: after, empty: "后续行动待补。")
-        }
-    }
-
-    @ViewBuilder
-    private func routeBlock(title: String, actions: [HandAction], empty: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-        if actions.isEmpty {
-            Text(empty)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(actions) { item in
-                    Text("• \(PokerLogic.actionText(item, session: store.session))")
-                        .font(.subheadline)
                 }
             }
         }
@@ -249,63 +142,328 @@ struct RouteEditorView: View {
         }
     }
 
-    private func actionPanel(_ hand: PokerHand) -> some View {
-        CardPanel {
-            HStack {
-                SectionTitle(title: "逐条记录行动", subtitle: "默认记录当前行动玩家；漏记时在时间线里点「+ 插入」。")
+    private func actionConsole(_ hand: PokerHand) -> some View {
+        let analysis = PokerLogic.streetAnalysis(for: hand, street: street)
+        let currentActor = actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor
+        let callAmount = analysis.callAmount(for: currentActor)
+        let choices = actionChoices(for: hand, actor: currentActor)
+
+        return CardPanel {
+            SectionTitle(
+                title: "行动顺序与记录",
+                subtitle: street == .preflop ? "翻前会考虑 straddle；点位置可直接切到那位补动作。" : "翻后从庄位左手边开始，已弃牌 / all-in 的玩家会被跳过。"
+            )
+
+            HStack(spacing: 10) {
+                metricTile(title: "底池", value: "\(analysis.isEstimated ? "约 " : "")\(PokerLogic.formatAmount(analysis.potBB, session: store.session))")
+                metricTile(title: "当前下注", value: PokerLogic.formatAmount(analysis.currentBetBB, session: store.session))
+                metricTile(title: "待跟", value: PokerLogic.formatAmount(callAmount, session: store.session))
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(PokerLogic.actionOrder(for: hand, street: street), id: \.self) { position in
+                        Button {
+                            actor = position
+                            syncActionChoice(with: hand, actorOverride: position)
+                        } label: {
+                            VStack(spacing: 3) {
+                                Text(orderLabel(position, hand: hand))
+                                    .font(.footnote.weight(.semibold))
+                                Text(positionState(position, currentActor: currentActor, actions: hand.streets[street]?.actions ?? []))
+                                    .font(.caption2.weight(.medium))
+                            }
+                            .foregroundStyle(position == currentActor ? .white : (position == hand.heroPosition ? .blue : .primary))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(position == currentActor ? Color.blue : Color.appSecondaryBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("当前行动")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(PokerLogic.positionLabel(currentActor))
+                        .font(.headline)
+                        .foregroundStyle(currentActor == hand.heroPosition ? .blue : .primary)
+                }
+
                 Spacer()
-                if !(hand.streets[street]?.actions.isEmpty ?? true) {
-                    Button("撤销上一条") { undo(hand) }
-                        .font(.footnote.weight(.semibold))
+
+                Button("用系统推荐") {
+                    syncActor(with: hand)
+                    syncActionChoice(with: hand)
                 }
+                .font(.footnote.weight(.semibold))
             }
 
-            Picker("当前玩家", selection: $actor) {
-                ForEach(actorOptions(hand), id: \.self) {
-                    Text(PokerLogic.positionLabel($0)).tag($0)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                ForEach(choices, id: \.self) { option in
+                    PillButton(title: displayAction(option, callAmount: callAmount), selected: action == option, warning: option == "all-in") {
+                        action = option
+                        if !needsAmount(option) { amount = "" }
+                    }
                 }
             }
-            .pickerStyle(.menu)
-
-            Picker("动作", selection: $action) {
-                ForEach(actionOptions, id: \.self) {
-                    Text($0).tag($0)
-                }
-            }
-            .pickerStyle(.segmented)
 
             if action == "自定义" {
                 TextField("自定义动作，例如 donk / cold call / tank fold", text: $customAction)
                     .textFieldStyle(.roundedBorder)
             }
 
-            TextField(store.session?.unit == .chips ? "尺度：筹码值，可空" : "尺度：bb，可空", text: $amount)
-                .decimalPadKeyboard()
-                .textFieldStyle(.roundedBorder)
+            if needsAmount(action) {
+                TextField(amountPlaceholder(for: action), text: $amount)
+                    .decimalPadKeyboard()
+                    .textFieldStyle(.roundedBorder)
+                Text(amountHelper(for: action))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
 
             Button {
-                appendAction(hand)
+                recordCurrentAction(hand)
             } label: {
-                Text("记录 \(actor.isEmpty ? "当前玩家" : PokerLogic.positionLabel(actor))")
+                Text("记录 \(PokerLogic.positionLabel(currentActor)) \(resolvedAction)")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .disabled(resolvedAction.isEmpty)
+            .buttonStyle(.borderedProminent)
+            .disabled(!canRecordCurrentAction)
 
-            Divider()
+            HStack {
+                Button("跳过不记") {
+                    actor = PokerLogic.nextActor(after: currentActor, hand: hand, street: street)
+                    syncActionChoice(with: hand, actorOverride: actor)
+                }
+                .buttonStyle(.bordered)
 
-            timelineList(hand)
+                Button("插入/修正") {
+                    openInsert(at: (hand.streets[street]?.actions.count ?? 0), hand: hand)
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                if !(hand.streets[street]?.actions.isEmpty ?? true) {
+                    Button("撤销上一条") { undo(hand) }
+                        .font(.footnote.weight(.semibold))
+                }
+            }
         }
     }
 
-    private var actionOptions: [String] {
-        street == .preflop ? ["limp", "open", "call", "raise", "3bet", "4bet", "fold", "all-in", "自定义"] : ["check", "bet", "call", "raise", "fold", "all-in", "自定义"]
+    private func routePreview(_ hand: PokerHand) -> some View {
+        let actions = hand.streets[street]?.actions ?? []
+
+        return CardPanel {
+            HStack(alignment: .firstTextBaseline) {
+                SectionTitle(title: "本街路线", subtitle: "自动生成。点任一动作可编辑、前后插入或删除。")
+                Spacer()
+                Button("+ 插入") { openInsert(at: actions.count, hand: hand) }
+                    .font(.footnote.weight(.semibold))
+            }
+
+            if actions.isEmpty {
+                EmptyStateView(text: "尚未记录本街行动。请从上方行动顺序开始。")
+            } else {
+                Text(PokerLogic.routeText(actions, session: store.session))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        openInsert(at: 0, hand: hand)
+                    } label: {
+                        insertRowLabel("+ 插入到开头", hand: hand, index: 0)
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(Array(actions.enumerated()), id: \.element.id) { index, item in
+                        Menu {
+                            Button("编辑这条") { openEdit(index: index, action: item) }
+                            Button("插入到这条之前") { openInsert(at: index, hand: hand) }
+                            Button("插入到这条之后") { openInsert(at: index + 1, hand: hand) }
+                            Button("删除这条", role: .destructive) { deleteAction(hand, index: index) }
+                        } label: {
+                            routeActionRow(index: index, action: item)
+                        }
+
+                        if index < actions.count - 1 {
+                            Button {
+                                openInsert(at: index + 1, hand: hand)
+                            } label: {
+                                insertRowLabel("+ 插入遗漏动作", hand: hand, index: index + 1)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func metricTile(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appSecondaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func routeActionRow(index: Int, action: HandAction) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(index + 1).")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+            Text(PokerLogic.actionText(action, session: store.session))
+                .font(.subheadline)
+                .foregroundStyle(action.hero ? .blue : .primary)
+            if action.hero {
+                Text("Hero")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+            Spacer()
+            Image(systemName: "ellipsis.circle")
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.appSecondaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func insertRowLabel(_ title: String, hand: PokerHand, index: Int) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(PokerLogic.positionLabel(PokerLogic.predictedActorForInsertion(at: index, hand: hand, street: street)))
+                .foregroundStyle(.secondary)
+        }
+        .font(.footnote.weight(.semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.appTertiaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var mutationActionOptions: [String] {
+        street == .preflop
+            ? ["fold", "limp", "open", "call", "raise", "3bet", "4bet", "all-in", "自定义"]
+            : ["check", "bet", "call", "raise", "fold", "all-in", "自定义"]
+    }
+
+    private func actionChoices(for hand: PokerHand, actor position: String) -> [String] {
+        let analysis = PokerLogic.streetAnalysis(for: hand, street: street)
+        let callAmount = analysis.callAmount(for: position)
+
+        if street == .preflop {
+            if callAmount > 0 {
+                return analysis.currentBetBB <= forcedPreflopBet(hand)
+                    ? ["fold", "limp", "open", "all-in", "自定义"]
+                    : ["fold", "call", "raise", "all-in", "自定义"]
+            }
+            return ["check", "raise", "all-in", "自定义"]
+        }
+
+        return callAmount > 0
+            ? ["fold", "call", "raise", "all-in", "自定义"]
+            : ["check", "bet", "all-in", "自定义"]
+    }
+
+    private func forcedPreflopBet(_ hand: PokerHand) -> Double {
+        max(1, hand.straddles.map(\.amountBB).max() ?? 1)
+    }
+
+    private func displayAction(_ option: String, callAmount: Double) -> String {
+        if option == "call", callAmount > 0 {
+            return "call \(PokerLogic.formatAmount(callAmount, session: store.session))"
+        }
+        return option
+    }
+
+    private func needsAmount(_ action: String) -> Bool {
+        ["open", "bet", "raise", "3bet", "4bet", "all-in"].contains(action)
+    }
+
+    private func requiresAmount(_ action: String) -> Bool {
+        ["open", "bet", "raise", "3bet", "4bet"].contains(action)
+    }
+
+    private func amountPlaceholder(for action: String) -> String {
+        let unit = store.session?.unit == .chips ? "筹码值" : "bb"
+        if action == "all-in" { return "All-in 投入 / 到多少\(unit)，可空" }
+        return "输入到多少\(unit)"
+    }
+
+    private func amountHelper(for action: String) -> String {
+        if action == "all-in" {
+            return "All-in 不填金额也能记录，但底池会标记为估算。"
+        }
+        return "下注和加注统一按「to X」记录，方便系统重算底池。"
+    }
+
+    private var resolvedAction: String {
+        if action == "自定义" {
+            return customAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return action
+    }
+
+    private var canRecordCurrentAction: Bool {
+        guard !resolvedAction.isEmpty else { return false }
+        if requiresAmount(action) {
+            return Double(amount) != nil
+        }
+        return true
     }
 
     private func actorOptions(_ hand: PokerHand) -> [String] {
-        Array(Set(PokerLogic.positions(for: hand.playerCount) + ["全桌"])).sorted { lhs, rhs in
-            let order = PokerLogic.positions(for: hand.playerCount) + ["全桌"]
-            return (order.firstIndex(of: lhs) ?? 0) < (order.firstIndex(of: rhs) ?? 0)
+        PokerLogic.positions(for: hand.playerCount)
+    }
+
+    private func positionState(_ position: String, currentActor: String, actions: [HandAction]) -> String {
+        if position == currentActor { return "当前" }
+        guard let last = actions.last(where: { $0.actor == position }) else { return "待行动" }
+        let normalized = PokerLogic.normalizedAction(last.action)
+        if PokerLogic.isFoldAction(normalized) { return "已弃牌" }
+        if PokerLogic.isAllInAction(normalized) { return "All-in" }
+        return "已行动"
+    }
+
+    private func orderLabel(_ position: String, hand: PokerHand) -> String {
+        position == hand.heroPosition ? "\(position) Hero" : position
+    }
+
+    private func syncActor(with hand: PokerHand) {
+        actor = PokerLogic.nextActor(for: hand, street: street)
+    }
+
+    private func syncActionChoice(with hand: PokerHand, actorOverride: String? = nil) {
+        let currentActor = actorOverride ?? (actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor)
+        let choices = actionChoices(for: hand, actor: currentActor)
+        if !choices.contains(action) {
+            action = choices.first ?? ""
+            amount = ""
+            customAction = ""
         }
     }
 
@@ -315,38 +473,73 @@ struct RouteEditorView: View {
         var updated = hand
         let route = PokerLogic.templateRoute(key, hand: hand)
         var record = updated.streets[.preflop] ?? StreetRecord()
-        record.potBB = route.potBB
-        record.confidence = "estimated"
         record.actions = route.actions
-        updated.streets[.preflop] = record
+        updated.streets[.preflop] = recalculatedRecord(record, hand: updated, street: .preflop)
         store.saveHand(updated)
         syncActor(with: updated)
+        syncActionChoice(with: updated)
     }
 
-    private func appendAction(_ hand: PokerHand) {
+    private func recordCurrentAction(_ hand: PokerHand) {
         var updated = hand
         var record = updated.streets[street] ?? StreetRecord()
-        let rawAmount = Double(amount)
-        let amountBB = rawAmount.map { PokerLogic.amountToBB($0, session: store.session) }
-        let safeActor = actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor
-        record.actions.append(HandAction(actor: safeActor, action: resolvedAction, amountBB: amountBB, hero: safeActor == hand.heroPosition))
-        updated.streets[street] = record
+        let currentActor = actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor
+        record.actions.append(
+            HandAction(
+                actor: currentActor,
+                action: resolvedAction,
+                amountBB: enteredAmountBB,
+                hero: currentActor == hand.heroPosition
+            )
+        )
+        updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
         amount = ""
         customAction = ""
         actor = PokerLogic.nextActor(for: updated, street: street)
+        syncActionChoice(with: updated)
     }
 
-    private func insertAction(hand: PokerHand, index: Int, actor: String, action: String, amountBB: Double?, shouldRecalculate: Bool) {
+    private func applyMutation(_ target: RouteActionSheetTarget, hand: PokerHand, actor: String, action: String, amountBB: Double?) {
+        switch target.kind {
+        case .insert:
+            insertAction(hand, index: target.index, actor: actor, action: action, amountBB: amountBB)
+        case .edit:
+            updateAction(hand, index: target.index, actor: actor, action: action, amountBB: amountBB)
+        }
+    }
+
+    private func insertAction(_ hand: PokerHand, index: Int, actor: String, action: String, amountBB: Double?) {
         var updated = hand
         var record = updated.streets[street] ?? StreetRecord()
         let safeIndex = min(max(index, 0), record.actions.count)
         record.actions.insert(HandAction(actor: actor, action: action, amountBB: amountBB, hero: actor == hand.heroPosition), at: safeIndex)
-        updated.streets[street] = record
+        updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
-        if shouldRecalculate {
-            self.actor = PokerLogic.nextActor(for: updated, street: street)
-        }
+        self.actor = PokerLogic.nextActor(for: updated, street: street)
+        syncActionChoice(with: updated)
+    }
+
+    private func updateAction(_ hand: PokerHand, index: Int, actor: String, action: String, amountBB: Double?) {
+        var updated = hand
+        var record = updated.streets[street] ?? StreetRecord()
+        guard record.actions.indices.contains(index) else { return }
+        record.actions[index] = HandAction(actor: actor, action: action, amountBB: amountBB, hero: actor == hand.heroPosition)
+        updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
+        store.saveHand(updated)
+        self.actor = PokerLogic.nextActor(for: updated, street: street)
+        syncActionChoice(with: updated)
+    }
+
+    private func deleteAction(_ hand: PokerHand, index: Int) {
+        var updated = hand
+        var record = updated.streets[street] ?? StreetRecord()
+        guard record.actions.indices.contains(index) else { return }
+        record.actions.remove(at: index)
+        updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
+        store.saveHand(updated)
+        actor = PokerLogic.nextActor(for: updated, street: street)
+        syncActionChoice(with: updated)
     }
 
     private func undo(_ hand: PokerHand) {
@@ -354,9 +547,48 @@ struct RouteEditorView: View {
         var record = updated.streets[street] ?? StreetRecord()
         guard !record.actions.isEmpty else { return }
         record.actions.removeLast()
-        updated.streets[street] = record
+        updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
         actor = PokerLogic.nextActor(for: updated, street: street)
+        syncActionChoice(with: updated)
+    }
+
+    private func recalculatedRecord(_ record: StreetRecord, hand: PokerHand, street: StreetKey) -> StreetRecord {
+        var draft = hand
+        draft.streets[street] = record
+        let analysis = PokerLogic.streetAnalysis(for: draft, street: street)
+        var updatedRecord = record
+        updatedRecord.potBB = analysis.potBB
+        updatedRecord.confidence = analysis.confidence
+        return updatedRecord
+    }
+
+    private var enteredAmountBB: Double? {
+        guard let rawAmount = Double(amount) else { return nil }
+        return PokerLogic.amountToBB(rawAmount, session: store.session)
+    }
+
+    private func openInsert(at index: Int, hand: PokerHand) {
+        let predicted = PokerLogic.predictedActorForInsertion(at: index, hand: hand, street: street)
+        sheetTarget = RouteActionSheetTarget(
+            kind: .insert,
+            street: street,
+            index: index,
+            initialActor: predicted,
+            initialAction: mutationActionOptions.first ?? "call",
+            initialAmountBB: nil
+        )
+    }
+
+    private func openEdit(index: Int, action: HandAction) {
+        sheetTarget = RouteActionSheetTarget(
+            kind: .edit,
+            street: street,
+            index: index,
+            initialActor: action.actor,
+            initialAction: action.action,
+            initialAmountBB: action.amountBB
+        )
     }
 
     private func next(_ hand: PokerHand) {
@@ -378,131 +610,69 @@ struct RouteEditorView: View {
             .flatMap { hand.streets[$0]?.board ?? [] }
         return hand.heroCards + otherBoard
     }
-
-    private var resolvedAction: String {
-        if action == "自定义" {
-            return customAction.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return action
-    }
-
-    private func syncActor(with hand: PokerHand) {
-        actor = PokerLogic.nextActor(for: hand, street: street)
-    }
-
-    private func orderLabel(_ position: String, hand: PokerHand) -> String {
-        position == hand.heroPosition ? "\(position) Hero" : position
-    }
-
-    private func timelineList(_ hand: PokerHand) -> some View {
-        let actions = hand.streets[street]?.actions ?? []
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("可修正时间线")
-                .font(.subheadline.weight(.semibold))
-
-            insertButton(index: 0, title: actions.isEmpty ? "+ 插入第一条动作" : "+ 插入到开头", hand: hand)
-
-            if actions.isEmpty {
-                Text("尚未记录本街行动。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(actions.enumerated()), id: \.element.id) { index, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(index + 1).")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                        Text(PokerLogic.actionText(item, session: store.session))
-                            .font(.subheadline)
-                            .foregroundStyle(item.hero ? .blue : .primary)
-                        if item.hero {
-                            Text("Hero")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.blue)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Color.blue.opacity(0.12))
-                                .clipShape(Capsule())
-                        }
-                    }
-
-                    insertButton(index: index + 1, title: index == actions.count - 1 ? "+ 插入到末尾" : "+ 插入遗漏动作", hand: hand)
-                }
-            }
-        }
-    }
-
-    private func insertButton(index: Int, title: String, hand: PokerHand) -> some View {
-        Button {
-            insertIndex = index
-            showInsertSheet = true
-        } label: {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(PokerLogic.positionLabel(PokerLogic.predictedActorForInsertion(at: index, hand: hand, street: street)))
-                    .foregroundStyle(.secondary)
-            }
-            .font(.footnote.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(Color.appTertiaryBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
 }
 
-struct InsertActionSheet: View {
+struct RouteActionSheetTarget: Identifiable {
+    enum Kind {
+        case insert
+        case edit
+    }
+
+    let id = UUID()
+    var kind: Kind
+    var street: StreetKey
+    var index: Int
+    var initialActor: String
+    var initialAction: String
+    var initialAmountBB: Double?
+}
+
+struct RouteActionMutationSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let session: ReviewSession?
     let hand: PokerHand
-    let street: StreetKey
-    let actorOptions: [String]
+    let target: RouteActionSheetTarget
     let actionOptions: [String]
-    let initialActor: String
-    let onInsert: (String, String, Double?, Bool) -> Void
+    let onSave: (String, String, Double?) -> Void
 
     @State private var actor: String
     @State private var action: String
     @State private var customAction = ""
     @State private var amount = ""
-    @State private var shouldRecalculate = false
 
     init(
         session: ReviewSession?,
         hand: PokerHand,
-        street: StreetKey,
-        actorOptions: [String],
+        target: RouteActionSheetTarget,
         actionOptions: [String],
-        initialActor: String,
-        onInsert: @escaping (String, String, Double?, Bool) -> Void
+        onSave: @escaping (String, String, Double?) -> Void
     ) {
         self.session = session
         self.hand = hand
-        self.street = street
-        self.actorOptions = actorOptions
+        self.target = target
         self.actionOptions = actionOptions
-        self.initialActor = initialActor
-        self.onInsert = onInsert
-        _actor = State(initialValue: initialActor)
-        _action = State(initialValue: actionOptions.first ?? "call")
+        self.onSave = onSave
+
+        let existingOption = actionOptions.contains(target.initialAction) ? target.initialAction : "自定义"
+        _actor = State(initialValue: target.initialActor)
+        _action = State(initialValue: existingOption)
+        _customAction = State(initialValue: existingOption == "自定义" ? target.initialAction : "")
+        _amount = State(initialValue: Self.displayAmount(target.initialAmountBB, session: session))
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Text("插入动作不会强迫你重写整条路线；默认只是把遗漏动作塞回时间线。")
+                    Text(target.kind == .insert ? "插入后会自动重算行动顺序、当前下注和底池。" : "保存后会自动重算行动顺序、当前下注和底池。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("位置") {
                     Picker("位置", selection: $actor) {
-                        ForEach(actorOptions, id: \.self) { position in
+                        ForEach(PokerLogic.positions(for: hand.playerCount), id: \.self) { position in
                             Text(PokerLogic.positionLabel(position)).tag(position)
                         }
                     }
@@ -517,29 +687,24 @@ struct InsertActionSheet: View {
                     if action == "自定义" {
                         TextField("自定义动作", text: $customAction)
                     }
-                    TextField(session?.unit == .chips ? "尺度：筹码值，可空" : "尺度：bb，可空", text: $amount)
-                        .decimalPadKeyboard()
-                }
-
-                Section {
-                    Toggle("插入后重算当前行动玩家", isOn: $shouldRecalculate)
-                    Text("默认关闭：只修正文案时间线。打开后，会按插入后的路线重新推荐下一位行动玩家。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if needsAmount(action) || action == "自定义" {
+                        TextField(amountPlaceholder(for: action), text: $amount)
+                            .decimalPadKeyboard()
+                    }
                 }
             }
-            .navigationTitle("插入遗漏动作")
+            .navigationTitle(target.kind == .insert ? "插入动作" : "编辑动作")
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("插入") {
-                        onInsert(actor, resolvedAction, amountBB, shouldRecalculate)
+                    Button(target.kind == .insert ? "插入" : "保存") {
+                        onSave(actor, resolvedAction, amountBB)
                         dismiss()
                     }
-                    .disabled(resolvedAction.isEmpty)
+                    .disabled(!canSave)
                 }
             }
         }
@@ -555,5 +720,32 @@ struct InsertActionSheet: View {
     private var amountBB: Double? {
         guard let rawAmount = Double(amount) else { return nil }
         return PokerLogic.amountToBB(rawAmount, session: session)
+    }
+
+    private var canSave: Bool {
+        guard !resolvedAction.isEmpty else { return false }
+        if ["open", "bet", "raise", "3bet", "4bet"].contains(action) {
+            return Double(amount) != nil
+        }
+        return true
+    }
+
+    private func needsAmount(_ action: String) -> Bool {
+        ["open", "bet", "raise", "3bet", "4bet", "all-in"].contains(action)
+    }
+
+    private func amountPlaceholder(for action: String) -> String {
+        let unit = session?.unit == .chips ? "筹码值" : "bb"
+        if action == "all-in" { return "All-in 投入 / 到多少\(unit)，可空" }
+        if action == "自定义" { return "金额，可空" }
+        return "输入到多少\(unit)"
+    }
+
+    private static func displayAmount(_ amountBB: Double?, session: ReviewSession?) -> String {
+        guard let amountBB else { return "" }
+        if session?.unit == .chips {
+            return PokerLogic.trim(amountBB * (session?.bb ?? 1))
+        }
+        return PokerLogic.trim(amountBB)
     }
 }

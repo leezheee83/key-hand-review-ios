@@ -58,6 +58,135 @@ enum PokerLogic {
         return nextActor(for: draft, street: street)
     }
 
+    struct StreetAnalysis {
+        var startingPotBB: Double
+        var potBB: Double
+        var currentBetBB: Double
+        var contributions: [String: Double]
+        var confidence: String
+
+        var isEstimated: Bool { confidence == "estimated" }
+
+        func callAmount(for actor: String) -> Double {
+            max(currentBetBB - (contributions[actor] ?? 0), 0)
+        }
+    }
+
+    static func streetAnalysis(for hand: PokerHand, street: StreetKey) -> StreetAnalysis {
+        let positions = positions(for: hand.playerCount)
+        let actions = hand.streets[street]?.actions ?? []
+        var confidence = "exact"
+        var contributions: [String: Double] = [:]
+        var startingPotBB: Double = 0
+        var currentBetBB: Double = 0
+
+        if street == .preflop {
+            if positions.contains("SB") { contributions["SB"] = 0.5 }
+            if positions.contains("BB") { contributions["BB"] = 1 }
+            for straddle in hand.straddles where positions.contains(straddle.position) {
+                contributions[straddle.position] = max(contributions[straddle.position] ?? 0, straddle.amountBB)
+            }
+            startingPotBB = contributions.values.reduce(0, +)
+            currentBetBB = contributions.values.max() ?? 0
+        } else {
+            startingPotBB = potBefore(street: street, hand: hand)
+        }
+
+        for action in actions {
+            let normalized = normalizedAction(action.action)
+            let currentContribution = contributions[action.actor] ?? 0
+
+            if isFoldAction(normalized) || normalized == "check" || normalized == "过牌" {
+                continue
+            }
+
+            if normalized == "call" || normalized == "跟注" {
+                let added = action.amountBB ?? max(currentBetBB - currentContribution, 0)
+                contributions[action.actor] = currentContribution + max(added, 0)
+                continue
+            }
+
+            if normalized == "limp" || normalized == "limped" || normalized == "跛入" {
+                let target = max(currentBetBB, street == .preflop ? 1 : 0)
+                contributions[action.actor] = currentContribution + max(target - currentContribution, 0)
+                currentBetBB = max(currentBetBB, target)
+                continue
+            }
+
+            if isAggressiveAction(normalized) {
+                guard let target = action.amountBB else {
+                    confidence = "estimated"
+                    continue
+                }
+                contributions[action.actor] = currentContribution + max(target - currentContribution, 0)
+                currentBetBB = max(currentBetBB, target)
+                continue
+            }
+
+            if isAllInAction(normalized) {
+                guard let target = action.amountBB else {
+                    confidence = "estimated"
+                    continue
+                }
+                let effectiveTarget = max(target, currentBetBB)
+                contributions[action.actor] = currentContribution + max(effectiveTarget - currentContribution, 0)
+                currentBetBB = max(currentBetBB, effectiveTarget)
+                continue
+            }
+
+            if action.amountBB != nil {
+                confidence = "estimated"
+            }
+        }
+
+        let potBB = startingPotBB + contributions.values.reduce(0, +) - (street == .preflop ? startingPotBB : 0)
+        return StreetAnalysis(
+            startingPotBB: startingPotBB,
+            potBB: potBB,
+            currentBetBB: currentBetBB,
+            contributions: contributions,
+            confidence: confidence
+        )
+    }
+
+    private static func potBefore(street: StreetKey, hand: PokerHand) -> Double {
+        guard let index = StreetKey.allCases.firstIndex(of: street), index > 0 else { return 0 }
+        let previousStreet = StreetKey.allCases[index - 1]
+        let previousRecord = hand.streets[previousStreet] ?? StreetRecord()
+        if !previousRecord.actions.isEmpty || previousStreet == .preflop {
+            return streetAnalysis(for: hand, street: previousStreet).potBB
+        }
+        return previousRecord.potBB ?? potBefore(street: previousStreet, hand: hand)
+    }
+
+    static func normalizedAction(_ action: String) -> String {
+        action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func isFoldAction(_ normalizedAction: String) -> Bool {
+        normalizedAction.contains("fold") || normalizedAction.contains("弃牌")
+    }
+
+    static func isAllInAction(_ normalizedAction: String) -> Bool {
+        normalizedAction.contains("all-in")
+            || normalizedAction.contains("allin")
+            || normalizedAction.contains("all in")
+            || normalizedAction.contains("全下")
+    }
+
+    static func isAggressiveAction(_ normalizedAction: String) -> Bool {
+        normalizedAction == "open"
+            || normalizedAction == "bet"
+            || normalizedAction == "raise"
+            || normalizedAction == "3bet"
+            || normalizedAction == "4bet"
+            || normalizedAction == "iso"
+            || normalizedAction == "加注"
+            || normalizedAction == "下注"
+            || normalizedAction.contains("bet")
+            || normalizedAction.contains("raise")
+    }
+
     private static func baseActionOrder(for hand: PokerHand, street: StreetKey) -> [String] {
         let positions = positions(for: hand.playerCount)
         guard !positions.isEmpty else { return [] }
