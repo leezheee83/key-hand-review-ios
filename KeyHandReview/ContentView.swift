@@ -208,11 +208,17 @@ struct HomeView: View {
                         Divider()
 
                         if session.isEnded {
-                            HStack {
-                                Text("本场已结束，可继续查看和补复盘。")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
+                            Text("本场已结束，可查看和补复盘；如果这场还要继续打，可以恢复记录。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 10) {
+                                Button("继续记录本场") {
+                                    store.resumeCurrentSession()
+                                    path.removeAll()
+                                }
+                                .buttonStyle(.borderedProminent)
+
                                 Button("返回场次列表") {
                                     store.closeCurrentSession()
                                     path.removeAll()
@@ -229,7 +235,7 @@ struct HomeView: View {
                 }
 
                 if store.session?.isEnded == true {
-                    Text("这场已经结束，不再新增手牌。需要新记录时，从场次列表新建一场。")
+                    Text("恢复记录后，新手牌会继续归到这一个 session。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
@@ -285,7 +291,7 @@ struct HomeView: View {
             }
             Button("继续记录", role: .cancel) { }
         } message: {
-            Text("结束后会回到场次列表；已记录手牌仍保存在本机，可重新进入查看和补复盘。")
+            Text("结束后会回到场次列表；已记录手牌仍保存在本机。之后重新进入，也可以点“继续记录本场”恢复新增手牌。")
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

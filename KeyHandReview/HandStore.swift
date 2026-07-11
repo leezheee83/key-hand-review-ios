@@ -58,6 +58,15 @@ final class HandStore: ObservableObject {
         }
     }
 
+    func resumeCurrentSession() {
+        guard var current = session else { return }
+        current.endedAt = nil
+        applySnapshot {
+            session = current
+            archives = upsert(SessionArchive(session: current, hands: hands), into: archives)
+        }
+    }
+
     func openSession(_ id: UUID) {
         guard let archive = sessionHistory.first(where: { $0.id == id }) else { return }
         applySnapshot {
