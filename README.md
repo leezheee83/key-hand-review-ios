@@ -14,6 +14,12 @@
 - Markdown 复制与系统分享
 - 本机本地存储：无登录、无后端、无网络依赖；数据保存在 iPhone App 本地，卸载 App 会随系统默认逻辑一并清除
 
+## 项目文档
+
+- [产品原则](docs/PRODUCT.md)：产品定位、核心体验、当前做什么和不做什么。
+- [关键决策记录](docs/DECISIONS.md)：记录重要交互和技术取舍，避免后续失忆式迭代。
+- [更新记录](docs/CHANGELOG.md)：记录每次用户可见的功能变化。
+
 ## 如何安装到自己的 iPhone
 
 1. 安装完整 Xcode（不是 Command Line Tools）。
