@@ -144,9 +144,12 @@ struct RouteEditorView: View {
 
     private func actionConsole(_ hand: PokerHand) -> some View {
         let analysis = PokerLogic.streetAnalysis(for: hand, street: street)
-        let currentActor = actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor
-        let callAmount = analysis.callAmount(for: currentActor)
-        let choices = actionChoices(for: hand, actor: currentActor)
+        let actorsNeedingAction = PokerLogic.actorsNeedingAction(for: hand, street: street)
+        let recommendedActor = PokerLogic.nextActorIfNeeded(for: hand, street: street)
+        let currentActor = actorsNeedingAction.contains(actor) ? actor : recommendedActor
+        let isStreetClosed = currentActor == nil
+        let callAmount = currentActor.map { analysis.callAmount(for: $0) } ?? 0
+        let choices = currentActor.map { actionChoices(for: hand, actor: $0) } ?? []
 
         return CardPanel {
             SectionTitle(
@@ -164,6 +167,7 @@ struct RouteEditorView: View {
                 HStack(spacing: 8) {
                     ForEach(PokerLogic.actionOrder(for: hand, street: street), id: \.self) { position in
                         Button {
+                            guard actorsNeedingAction.contains(position) else { return }
                             actor = position
                             syncActionChoice(with: hand, actorOverride: position)
                         } label: {
@@ -173,13 +177,14 @@ struct RouteEditorView: View {
                                 Text(positionState(position, currentActor: currentActor, actions: hand.streets[street]?.actions ?? []))
                                     .font(.caption2.weight(.medium))
                             }
-                            .foregroundStyle(position == currentActor ? .white : (position == hand.heroPosition ? .blue : .primary))
+                            .foregroundStyle(position == currentActor ? .white : positionTextColor(position: position, hand: hand, actorsNeedingAction: actorsNeedingAction))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 9)
                             .background(position == currentActor ? Color.blue : Color.appSecondaryBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                        .disabled(!actorsNeedingAction.contains(position))
                     }
                 }
             }
@@ -189,9 +194,9 @@ struct RouteEditorView: View {
                     Text("当前行动")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(PokerLogic.positionLabel(currentActor))
+                    Text(currentActor.map { PokerLogic.positionLabel($0) } ?? "本街已闭合")
                         .font(.headline)
-                        .foregroundStyle(currentActor == hand.heroPosition ? .blue : .primary)
+                        .foregroundStyle(currentActor == hand.heroPosition ? .blue : (isStreetClosed ? .green : .primary))
                 }
 
                 Spacer()
@@ -226,21 +231,33 @@ struct RouteEditorView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button {
-                recordCurrentAction(hand)
-            } label: {
-                Text("记录 \(PokerLogic.positionLabel(currentActor)) \(resolvedAction)")
-                    .frame(maxWidth: .infinity)
+            if isStreetClosed {
+                Text("本街行动已闭合：如果漏记，用下方「本街路线」插入 / 编辑；否则直接进入下一街。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                Button {
+                    recordCurrentAction(hand)
+                } label: {
+                    Text("记录 \(currentActor.map { PokerLogic.positionLabel($0) } ?? "当前玩家") \(resolvedAction)")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canRecordCurrentAction)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canRecordCurrentAction)
 
             HStack {
                 Button("跳过不记") {
-                    actor = PokerLogic.nextActor(after: currentActor, hand: hand, street: street)
+                    guard let currentActor else { return }
+                    actor = PokerLogic.nextActorAfterManualSkip(after: currentActor, hand: hand, street: street) ?? ""
                     syncActionChoice(with: hand, actorOverride: actor)
                 }
                 .buttonStyle(.bordered)
+                .disabled(isStreetClosed)
 
                 Button("插入/修正") {
                     openInsert(at: (hand.streets[street]?.actions.count ?? 0), hand: hand)
@@ -440,7 +457,7 @@ struct RouteEditorView: View {
         PokerLogic.positions(for: hand.playerCount)
     }
 
-    private func positionState(_ position: String, currentActor: String, actions: [HandAction]) -> String {
+    private func positionState(_ position: String, currentActor: String?, actions: [HandAction]) -> String {
         if position == currentActor { return "当前" }
         guard let last = actions.last(where: { $0.actor == position }) else { return "待行动" }
         let normalized = PokerLogic.normalizedAction(last.action)
@@ -449,16 +466,26 @@ struct RouteEditorView: View {
         return "已行动"
     }
 
+    private func positionTextColor(position: String, hand: PokerHand, actorsNeedingAction: Set<String>) -> Color {
+        if !actorsNeedingAction.contains(position) { return .secondary }
+        return position == hand.heroPosition ? .blue : .primary
+    }
+
     private func orderLabel(_ position: String, hand: PokerHand) -> String {
         position == hand.heroPosition ? "\(position) Hero" : position
     }
 
     private func syncActor(with hand: PokerHand) {
-        actor = PokerLogic.nextActor(for: hand, street: street)
+        actor = PokerLogic.nextActorIfNeeded(for: hand, street: street) ?? ""
     }
 
     private func syncActionChoice(with hand: PokerHand, actorOverride: String? = nil) {
-        let currentActor = actorOverride ?? (actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor)
+        guard let currentActor = actorOverride ?? (actor.isEmpty ? PokerLogic.nextActorIfNeeded(for: hand, street: street) : actor) else {
+            action = ""
+            amount = ""
+            customAction = ""
+            return
+        }
         let choices = actionChoices(for: hand, actor: currentActor)
         if !choices.contains(action) {
             action = choices.first ?? ""
@@ -483,7 +510,9 @@ struct RouteEditorView: View {
     private func recordCurrentAction(_ hand: PokerHand) {
         var updated = hand
         var record = updated.streets[street] ?? StreetRecord()
-        let currentActor = actor.isEmpty ? PokerLogic.nextActor(for: hand, street: street) : actor
+        guard let recommendedActor = PokerLogic.nextActorIfNeeded(for: hand, street: street) else { return }
+        let actorsNeedingAction = PokerLogic.actorsNeedingAction(for: hand, street: street)
+        let currentActor = actorsNeedingAction.contains(actor) ? actor : recommendedActor
         record.actions.append(
             HandAction(
                 actor: currentActor,
@@ -496,7 +525,7 @@ struct RouteEditorView: View {
         store.saveHand(updated)
         amount = ""
         customAction = ""
-        actor = PokerLogic.nextActor(for: updated, street: street)
+        actor = PokerLogic.nextActorIfNeeded(for: updated, street: street) ?? ""
         syncActionChoice(with: updated)
     }
 
@@ -516,7 +545,7 @@ struct RouteEditorView: View {
         record.actions.insert(HandAction(actor: actor, action: action, amountBB: amountBB, hero: actor == hand.heroPosition), at: safeIndex)
         updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
-        self.actor = PokerLogic.nextActor(for: updated, street: street)
+        self.actor = PokerLogic.nextActorIfNeeded(for: updated, street: street) ?? ""
         syncActionChoice(with: updated)
     }
 
@@ -527,7 +556,7 @@ struct RouteEditorView: View {
         record.actions[index] = HandAction(actor: actor, action: action, amountBB: amountBB, hero: actor == hand.heroPosition)
         updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
-        self.actor = PokerLogic.nextActor(for: updated, street: street)
+        self.actor = PokerLogic.nextActorIfNeeded(for: updated, street: street) ?? ""
         syncActionChoice(with: updated)
     }
 
@@ -538,7 +567,7 @@ struct RouteEditorView: View {
         record.actions.remove(at: index)
         updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
-        actor = PokerLogic.nextActor(for: updated, street: street)
+        actor = PokerLogic.nextActorIfNeeded(for: updated, street: street) ?? ""
         syncActionChoice(with: updated)
     }
 
@@ -549,7 +578,7 @@ struct RouteEditorView: View {
         record.actions.removeLast()
         updated.streets[street] = recalculatedRecord(record, hand: updated, street: street)
         store.saveHand(updated)
-        actor = PokerLogic.nextActor(for: updated, street: street)
+        actor = PokerLogic.nextActorIfNeeded(for: updated, street: street) ?? ""
         syncActionChoice(with: updated)
     }
 

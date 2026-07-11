@@ -30,23 +30,45 @@ enum PokerLogic {
     }
 
     static func nextActor(for hand: PokerHand, street: StreetKey) -> String {
+        nextActorIfNeeded(for: hand, street: street) ?? hand.heroPosition
+    }
+
+    static func nextActorIfNeeded(for hand: PokerHand, street: StreetKey) -> String? {
         let baseOrder = baseActionOrder(for: hand, street: street)
         let actionable = Set(actionablePositions(for: hand, street: street))
-        guard !baseOrder.isEmpty else { return hand.heroPosition }
+        guard !baseOrder.isEmpty else { return nil }
         let activeOrder = baseOrder.filter { actionable.contains($0) }
-        guard !activeOrder.isEmpty else { return hand.heroPosition }
+        guard activeOrder.count > 1 else { return nil }
 
         let actions = hand.streets[street]?.actions ?? []
         guard let lastActor = actions.last(where: { baseOrder.contains($0.actor) })?.actor else {
-            return activeOrder.first ?? hand.heroPosition
+            return activeOrder.first
         }
-        return nextActor(after: lastActor, in: baseOrder, actionable: actionable) ?? (activeOrder.first ?? hand.heroPosition)
+        let actorsNeedingAction = actorsNeedingAction(for: hand, street: street, order: baseOrder, activeActors: actionable)
+        guard !actorsNeedingAction.isEmpty else { return nil }
+        return nextActor(after: lastActor, in: baseOrder, actionable: actionable, requiringAction: actorsNeedingAction)
+            ?? activeOrder.first { actorsNeedingAction.contains($0) }
     }
 
     static func nextActor(after actor: String, hand: PokerHand, street: StreetKey) -> String {
+        guard let next = nextActorAfterManualSkip(after: actor, hand: hand, street: street) else {
+            return nextActor(for: hand, street: street)
+        }
+        return next
+    }
+
+    static func nextActorAfterManualSkip(after actor: String, hand: PokerHand, street: StreetKey) -> String? {
         let baseOrder = baseActionOrder(for: hand, street: street)
         let actionable = Set(actionablePositions(for: hand, street: street))
-        return nextActor(after: actor, in: baseOrder, actionable: actionable) ?? nextActor(for: hand, street: street)
+        let actorsNeedingAction = actorsNeedingAction(for: hand, street: street, order: baseOrder, activeActors: actionable)
+        guard !actorsNeedingAction.isEmpty else { return nil }
+        return nextActor(after: actor, in: baseOrder, actionable: actionable, requiringAction: actorsNeedingAction)
+    }
+
+    static func actorsNeedingAction(for hand: PokerHand, street: StreetKey) -> Set<String> {
+        let baseOrder = baseActionOrder(for: hand, street: street)
+        let actionable = Set(actionablePositions(for: hand, street: street))
+        return actorsNeedingAction(for: hand, street: street, order: baseOrder, activeActors: actionable)
     }
 
     static func predictedActorForInsertion(at index: Int, hand: PokerHand, street: StreetKey) -> String {
@@ -242,6 +264,62 @@ enum PokerLogic {
             }
         }
         return nil
+    }
+
+    private static func nextActor(after actor: String, in order: [String], actionable: Set<String>, requiringAction: Set<String>) -> String? {
+        guard !order.isEmpty else { return nil }
+        guard let index = order.firstIndex(of: actor) else {
+            return order.first { actionable.contains($0) && requiringAction.contains($0) }
+        }
+        for offset in 1...order.count {
+            let next = order[(index + offset) % order.count]
+            if actionable.contains(next) && requiringAction.contains(next) {
+                return next
+            }
+        }
+        return nil
+    }
+
+    private static func actorsNeedingAction(for hand: PokerHand, street: StreetKey, order: [String], activeActors: Set<String>) -> Set<String> {
+        let activeOrder = order.filter { activeActors.contains($0) }
+        guard activeOrder.count > 1 else { return [] }
+
+        let actions = hand.streets[street]?.actions ?? []
+        guard !actions.isEmpty else { return Set(activeOrder) }
+
+        let analysis = streetAnalysis(for: hand, street: street)
+        let latestAggressiveIndex = actions.indices.reversed().first { index in
+            isAggressiveAction(normalizedAction(actions[index].action))
+        }
+
+        func hasAction(_ actor: String) -> Bool {
+            actions.contains { $0.actor == actor }
+        }
+
+        func hasActionAfterLatestAggression(_ actor: String, latestAggressiveIndex: Int) -> Bool {
+            actions.indices.contains { index in
+                index > latestAggressiveIndex && actions[index].actor == actor
+            }
+        }
+
+        if let latestAggressiveIndex {
+            let aggressor = actions[latestAggressiveIndex].actor
+            return Set(activeOrder.filter { actor in
+                guard actor != aggressor else { return false }
+                let hasResponded = hasActionAfterLatestAggression(actor, latestAggressiveIndex: latestAggressiveIndex)
+                let hasMatchedCurrentBet = (analysis.contributions[actor] ?? 0) >= analysis.currentBetBB
+                return !hasResponded || !hasMatchedCurrentBet
+            })
+        }
+
+        return Set(activeOrder.filter { actor in
+            let hasActed = hasAction(actor)
+            let hasMatchedForcedBet = (analysis.contributions[actor] ?? 0) >= analysis.currentBetBB
+            if street == .preflop {
+                return !hasActed || !hasMatchedForcedBet
+            }
+            return !hasActed
+        })
     }
 
     static func positionLabel(_ position: String) -> String {
