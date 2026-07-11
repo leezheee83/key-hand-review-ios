@@ -179,109 +179,58 @@ struct HomeView: View {
     @EnvironmentObject private var store: HandStore
     @Binding var path: [AppRoute]
     @State private var showingEndSessionConfirmation = false
+    @State private var handPendingDeletion: PokerHand?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let session = store.session {
-                    CardPanel {
-                        Text("本次核心目标")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text("只抓住关键手牌")
-                            .font(.title2.bold())
-                        Text("大池量、纠结牌、对手读牌；其他牌不打扰。")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Label("\(store.hands.count) 已保存", systemImage: "tray.full")
-                            Spacer()
-                            Label("\(store.hands.filter { $0.status == .draft }.count) 待补全", systemImage: "pencil.and.list.clipboard")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                        Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH · 默认 \(session.playerCount) 人桌 · \(session.straddles.isEmpty ? "默认无 straddle" : "默认有 straddle")")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-
-                        Divider()
-
-                        if session.isEnded {
-                            Text("本场已结束，可查看和补复盘；如果这场还要继续打，可以恢复记录。")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-
-                            HStack(spacing: 10) {
-                                Button("继续记录本场") {
-                                    store.resumeCurrentSession()
-                                    path.removeAll()
-                                }
-                                .buttonStyle(.borderedProminent)
-
-                                Button("返回场次列表") {
-                                    store.closeCurrentSession()
-                                    path.removeAll()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        } else {
-                            Button("结束本场") {
-                                showingEndSessionConfirmation = true
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
+        List {
+            if let session = store.session {
+                Section {
+                    sessionSummary(session)
+                        .plainListCardRow()
                 }
+            }
 
-                if store.session?.isEnded == true {
-                    Text("恢复记录后，新手牌会继续归到这一个 session。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Button {
-                        if let hand = store.createDraft() {
-                            path.append(.quick(hand.id))
-                        }
-                    } label: {
-                        Text("＋ 记关键牌")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 56)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
+            Section {
+                recordEntry
+                    .plainListCardRow()
+            }
 
-                Text("一手结束后打开，先保存，再补完整路线。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-
+            Section {
                 HStack {
                     Text("手牌记录")
                         .font(.headline)
                     Spacer()
                     Button("待复盘") { path.append(.inbox) }
                 }
+                .plainListCardRow()
 
                 if store.hands.isEmpty {
                     EmptyStateView(text: "还没有记录。下一手纠结或有学习价值的牌后，点“记关键牌”。")
+                        .plainListCardRow()
                 } else {
-                    VStack(spacing: 12) {
-                        ForEach(store.hands) { hand in
-                            Button {
-                                path.append(hand.status == .draft ? .route(hand.id) : .detail(hand.id))
+                    ForEach(store.hands) { hand in
+                        Button {
+                            path.append(hand.status == .draft ? .route(hand.id) : .detail(hand.id))
+                        } label: {
+                            HandRow(hand: hand, session: store.session)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                handPendingDeletion = hand
                             } label: {
-                                HandRow(hand: hand, session: store.session)
+                                Label("删除", systemImage: "trash")
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
-            .padding()
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .background(Color.appGroupedBackground)
         .navigationTitle("手牌复盘速记")
         .confirmationDialog("结束本场？", isPresented: $showingEndSessionConfirmation, titleVisibility: .visible) {
@@ -293,6 +242,19 @@ struct HomeView: View {
         } message: {
             Text("结束后会回到场次列表；已记录手牌仍保存在本机。之后重新进入，也可以点“继续记录本场”恢复新增手牌。")
         }
+        .alert("删除这手牌？", isPresented: deleteConfirmationBinding) {
+            Button("删除", role: .destructive) {
+                if let handPendingDeletion {
+                    store.deleteHand(id: handPendingDeletion.id)
+                }
+                handPendingDeletion = nil
+            }
+            Button("取消", role: .cancel) {
+                handPendingDeletion = nil
+            }
+        } message: {
+            Text("删除后无法恢复。")
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(store.session?.unit == .bb ? "bb" : "筹码") {
@@ -302,6 +264,105 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private var deleteConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { handPendingDeletion != nil },
+            set: { isPresented in
+                if !isPresented {
+                    handPendingDeletion = nil
+                }
+            }
+        )
+    }
+
+    private func sessionSummary(_ session: ReviewSession) -> some View {
+        CardPanel {
+            Text("本次核心目标")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("只抓住关键手牌")
+                .font(.title2.bold())
+            Text("大池量、纠结牌、对手读牌；其他牌不打扰。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack {
+                Label("\(store.hands.count) 已保存", systemImage: "tray.full")
+                Spacer()
+                Label("\(store.hands.filter { $0.status == .draft }.count) 待补全", systemImage: "pencil.and.list.clipboard")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+
+            Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH · 默认 \(session.playerCount) 人桌 · \(session.straddles.isEmpty ? "默认无 straddle" : "默认有 straddle")")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            if session.isEnded {
+                Text("本场已结束，可查看和补复盘；如果这场还要继续打，可以恢复记录。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("继续记录本场") {
+                        store.resumeCurrentSession()
+                        path.removeAll()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("返回场次列表") {
+                        store.closeCurrentSession()
+                        path.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else {
+                Button("结束本场") {
+                    showingEndSessionConfirmation = true
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var recordEntry: some View {
+        VStack(spacing: 10) {
+            if store.session?.isEnded == true {
+                Text("恢复记录后，新手牌会继续归到这一个 session。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Button {
+                    if let hand = store.createDraft() {
+                        path.append(.quick(hand.id))
+                    }
+                } label: {
+                    Text("＋ 记关键牌")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+
+            Text("一手结束后打开，先保存，再补完整路线。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+private extension View {
+    func plainListCardRow() -> some View {
+        self
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 }
 

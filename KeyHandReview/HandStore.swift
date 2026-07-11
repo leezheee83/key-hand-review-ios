@@ -114,6 +114,10 @@ final class HandStore: ObservableObject {
         }
     }
 
+    func deleteHand(id: UUID) {
+        hands.removeAll { $0.id == id }
+    }
+
     private var storeURL: URL {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return directory.appendingPathComponent(storageFileName)

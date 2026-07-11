@@ -6,20 +6,11 @@ struct RouteEditorView: View {
     @Binding var path: [AppRoute]
 
     @State private var street: StreetKey = .preflop
-    @State private var selectedTemplate = ""
     @State private var actor = ""
     @State private var action = ""
     @State private var customAction = ""
     @State private var amount = ""
     @State private var sheetTarget: RouteActionSheetTarget?
-
-    private let templates = [
-        ("open", "Hero open"),
-        ("vsopen", "面对 open"),
-        ("limped", "limped / ISO"),
-        ("3bet", "3bet pot"),
-        ("custom", "自定义")
-    ]
 
     var body: some View {
         Group {
@@ -39,7 +30,7 @@ struct RouteEditorView: View {
                             .pickerStyle(.segmented)
 
                             if street == .preflop {
-                                preflopTemplates(hand)
+                                preflopTemplates()
                             } else {
                                 boardPanel(hand)
                             }
@@ -177,19 +168,23 @@ struct RouteEditorView: View {
         }
     }
 
-    private func preflopTemplates(_ hand: PokerHand) -> some View {
+    private func preflopTemplates() -> some View {
         CardPanel {
             SectionTitle(
-                title: "翻前结构（可选）",
-                subtitle: selectedTemplate == "custom" ? "自定义不会预填行动；直接从行动顺序开始记录。" : "可先生成常见结构，再在下方按顺序修正。"
+                title: "翻前结构",
+                subtitle: "默认自定义，不预填模板；直接从下方行动顺序开始记录。"
             )
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
-                ForEach(templates, id: \.0) { key, label in
-                    PillButton(title: label, selected: selectedTemplate == key) {
-                        applyTemplate(key, hand: hand)
-                    }
-                }
-            }
+            Label("自定义", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.blue.opacity(0.10))
+                .clipShape(Capsule())
+
+            Text("先不展示 Hero open、面对 open、3bet pot 等结构，减少现场记录时的理解成本。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -564,19 +559,6 @@ struct RouteEditorView: View {
             amount = ""
             customAction = ""
         }
-    }
-
-    private func applyTemplate(_ key: String, hand: PokerHand) {
-        selectedTemplate = key
-        guard key != "custom" else { return }
-        var updated = hand
-        let route = PokerLogic.templateRoute(key, hand: hand)
-        var record = updated.streets[.preflop] ?? StreetRecord()
-        record.actions = route.actions
-        updated.streets[.preflop] = recalculatedRecord(record, hand: updated, street: .preflop)
-        store.saveHand(updated)
-        syncActor(with: updated)
-        syncActionChoice(with: updated)
     }
 
     private func recordCurrentAction(_ hand: PokerHand) {
