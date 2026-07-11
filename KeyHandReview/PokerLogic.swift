@@ -2,6 +2,20 @@ import Foundation
 
 enum PokerLogic {
     static let ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
+    static let handTagOptions = ["待复盘", "诈唬", "抓诈", "Hero Fold", "价值", "冤家", "自定义"]
+    private static let legacyHandTagMap = [
+        "大池量": "待复盘",
+        "纠结": "待复盘",
+        "对手读牌": "待复盘"
+    ]
+
+    static func normalizedHandTags(_ tags: [String]) -> [String] {
+        tags.reduce(into: []) { result, tag in
+            let normalized = legacyHandTagMap[tag] ?? tag
+            guard !result.contains(normalized) else { return }
+            result.append(normalized)
+        }
+    }
 
     static func positions(for playerCount: Int) -> [String] {
         switch playerCount {
@@ -397,6 +411,7 @@ enum PokerLogic {
             : hand.straddles.map { "\(positionLabel($0.position)) \(formatAmount($0.amountBB, session: session, paired: true))" }.joined(separator: ", ")
         let game = session.map { "\(trim($0.sb))/\(trim($0.bb)) NLH Hand Review" } ?? "NLH Hand Review"
         let heroCards = hand.heroCards.map(\.display).joined(separator: " ")
+        let tags = normalizedHandTags(hand.tags)
 
         return """
         ---
@@ -404,7 +419,7 @@ enum PokerLogic {
         game: \(game)
         players: \(hand.playerCount)
         straddle: \(straddle)
-        tags: [\(hand.tags.joined(separator: ", "))]
+        tags: [\(tags.joined(separator: ", "))]
         ---
 
         # \(positionLabel(hand.heroPosition)) \(heroCards.isEmpty ? "[手牌待补]" : heroCards)｜有效后手 \(formatAmount(hand.effectiveStackBB, session: session, paired: true))
@@ -423,7 +438,7 @@ enum PokerLogic {
         let title = session.map { "# \(trim($0.sb))/\(trim($0.bb)) NLH 手牌复盘" } ?? "# NLH 手牌复盘"
         let index = hands.enumerated().map { idx, hand in
             let heroCards = hand.heroCards.map(\.display).joined(separator: " ")
-            return "- 手牌 \(idx + 1)：\(positionLabel(hand.heroPosition)) \(heroCards.isEmpty ? "[手牌待补]" : heroCards) · \(hand.tags.joined(separator: "/"))"
+            return "- 手牌 \(idx + 1)：\(positionLabel(hand.heroPosition)) \(heroCards.isEmpty ? "[手牌待补]" : heroCards) · \(normalizedHandTags(hand.tags).joined(separator: "/"))"
         }.joined(separator: "\n")
         return "\(title)\n\n\(index)\n\n\(hands.map { markdown(for: $0, session: session) }.joined(separator: "\n\n---\n\n"))"
     }

@@ -96,12 +96,13 @@ struct DetailView: View {
             }
 
             HStack {
-                ForEach(hand.tags, id: \.self) { tag in
+                ForEach(PokerLogic.normalizedHandTags(hand.tags), id: \.self) { tag in
                     Text(tag)
                         .font(.caption.weight(.bold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Color.blue.opacity(0.12))
+                        .foregroundStyle(tagColor(for: tag))
+                        .background(tagColor(for: tag).opacity(0.12))
                         .clipShape(Capsule())
                 }
             }
@@ -207,6 +208,18 @@ struct DetailView: View {
         UIPasteboard.general.string = markdown
         #endif
     }
+
+    private func tagColor(for tag: String) -> Color {
+        switch tag {
+        case "诈唬": return .purple
+        case "抓诈": return .orange
+        case "Hero Fold": return .red
+        case "价值": return .green
+        case "冤家": return .pink
+        case "自定义": return .secondary
+        default: return .blue
+        }
+    }
 }
 
 struct InboxView: View {
@@ -216,8 +229,8 @@ struct InboxView: View {
 
     private var sortedHands: [PokerHand] {
         store.hands.sorted {
-            if $0.tags.contains("纠结") != $1.tags.contains("纠结") {
-                return $0.tags.contains("纠结")
+            if ($0.status == .draft) != ($1.status == .draft) {
+                return $0.status == .draft
             }
             return $0.createdAt > $1.createdAt
         }
@@ -229,14 +242,13 @@ struct InboxView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("待复盘")
                         .font(.largeTitle.bold())
-                    Text("按纠结优先，而不是时间流水账。")
+                    Text("待补全优先，最新在前。")
                         .foregroundStyle(.secondary)
                 }
 
                 HStack {
-                    Text("纠结优先")
-                    Text("大池量")
                     Text("待补全")
+                    Text("最新记录")
                 }
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)

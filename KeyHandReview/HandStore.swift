@@ -71,7 +71,7 @@ final class HandStore: ObservableObject {
         guard let archive = sessionHistory.first(where: { $0.id == id }) else { return }
         applySnapshot {
             session = archive.session
-            hands = archive.hands
+            hands = archive.hands.map(normalizedHand)
         }
     }
 
@@ -101,10 +101,11 @@ final class HandStore: ObservableObject {
     }
 
     func saveHand(_ hand: PokerHand) {
-        if let index = hands.firstIndex(where: { $0.id == hand.id }) {
-            hands[index] = hand
+        let normalized = normalizedHand(hand)
+        if let index = hands.firstIndex(where: { $0.id == normalized.id }) {
+            hands[index] = normalized
         } else {
-            hands.insert(hand, at: 0)
+            hands.insert(normalized, at: 0)
         }
     }
 
@@ -147,18 +148,18 @@ final class HandStore: ObservableObject {
         guard let migratedSession else { return }
         applySnapshot {
             session = migratedSession
-            hands = migratedHands
-            archives = [SessionArchive(session: migratedSession, hands: migratedHands)]
+            hands = migratedHands.map(normalizedHand)
+            archives = [SessionArchive(session: migratedSession, hands: hands)]
         }
     }
 
     private func applyLoadedSnapshot(_ snapshot: StoreSnapshot) {
         isApplyingSnapshot = true
-        archives = snapshot.archives
+        archives = snapshot.archives.map(normalizedArchive)
         if let activeSessionID = snapshot.activeSessionID,
-           let active = snapshot.archives.first(where: { $0.id == activeSessionID }) {
+           let active = archives.first(where: { $0.id == activeSessionID }) {
             session = active.session
-            hands = active.hands
+            hands = active.hands.map(normalizedHand)
         } else {
             session = nil
             hands = []
@@ -190,6 +191,7 @@ final class HandStore: ObservableObject {
     }
 
     private func upsert(_ archive: SessionArchive, into source: [SessionArchive]) -> [SessionArchive] {
+        let archive = normalizedArchive(archive)
         var updated = source
         if let index = updated.firstIndex(where: { $0.id == archive.id }) {
             updated[index] = archive
@@ -197,5 +199,15 @@ final class HandStore: ObservableObject {
             updated.insert(archive, at: 0)
         }
         return updated
+    }
+
+    private func normalizedArchive(_ archive: SessionArchive) -> SessionArchive {
+        SessionArchive(session: archive.session, hands: archive.hands.map(normalizedHand))
+    }
+
+    private func normalizedHand(_ hand: PokerHand) -> PokerHand {
+        var copy = hand
+        copy.tags = PokerLogic.normalizedHandTags(hand.tags)
+        return copy
     }
 }

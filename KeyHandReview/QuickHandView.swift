@@ -9,7 +9,7 @@ struct QuickHandView: View {
     @State private var customStack = ""
     @State private var errorMessage: String?
 
-    private let tagOptions = ["大池量", "纠结", "对手读牌"]
+    private let tagOptions = PokerLogic.handTagOptions
     private let stacks: [Double] = [50, 75, 100, 150, 200, 300]
 
     var body: some View {
@@ -23,10 +23,10 @@ struct QuickHandView: View {
                 }
 
                 CardPanel {
-                    SectionTitle(title: "为什么记这手？", subtitle: "至少选一个；其余字段均可之后补。")
+                    SectionTitle(title: "标记这手", subtitle: "至少选一个。")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                         ForEach(tagOptions, id: \.self) { tag in
-                            PillButton(title: tag, selected: hand.tags.contains(tag), warning: tag == "纠结") {
+                            PillButton(title: tag, selected: PokerLogic.normalizedHandTags(hand.tags).contains(tag)) {
                                 toggleTag(tag)
                             }
                         }
@@ -118,16 +118,19 @@ struct QuickHandView: View {
         .onAppear {
             if let loaded = store.hand(id: handID) {
                 hand = loaded
+                hand.tags = PokerLogic.normalizedHandTags(loaded.tags)
             }
         }
     }
 
     private func toggleTag(_ tag: String) {
-        if let index = hand.tags.firstIndex(of: tag) {
-            hand.tags.remove(at: index)
+        var tags = PokerLogic.normalizedHandTags(hand.tags)
+        if let index = tags.firstIndex(of: tag) {
+            tags.remove(at: index)
         } else {
-            hand.tags.append(tag)
+            tags.append(tag)
         }
+        hand.tags = tags
     }
 
     private func choosePlayerCount(_ count: Int) {
@@ -143,8 +146,9 @@ struct QuickHandView: View {
     }
 
     private func saveAndContinue() {
+        hand.tags = PokerLogic.normalizedHandTags(hand.tags)
         guard !hand.tags.isEmpty else {
-            errorMessage = "至少选择一个记录原因。"
+            errorMessage = "至少选择一个标签。"
             return
         }
         guard !hand.heroPosition.isEmpty else {

@@ -395,13 +395,13 @@ struct HandRow: View {
     var body: some View {
         CardPanel {
             HStack {
-                ForEach(hand.tags, id: \.self) { tag in
+                ForEach(PokerLogic.normalizedHandTags(hand.tags), id: \.self) { tag in
                     Text(tag)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(tag == "纠结" ? .orange : .blue)
+                        .foregroundStyle(color(for: tag))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background((tag == "纠结" ? Color.orange : Color.blue).opacity(0.12))
+                        .background(color(for: tag).opacity(0.12))
                         .clipShape(Capsule())
                 }
                 Spacer()
@@ -419,6 +419,18 @@ struct HandRow: View {
                 .foregroundStyle(.secondary)
 
             ProgressView(value: Double(PokerLogic.completeness(hand)), total: 100)
+        }
+    }
+
+    private func color(for tag: String) -> Color {
+        switch tag {
+        case "诈唬": return .purple
+        case "抓诈": return .orange
+        case "Hero Fold": return .red
+        case "价值": return .green
+        case "冤家": return .pink
+        case "自定义": return .secondary
+        default: return .blue
         }
     }
 }
