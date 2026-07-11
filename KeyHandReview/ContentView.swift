@@ -190,9 +190,11 @@ struct HomeView: View {
                 }
             }
 
-            Section {
-                recordEntry
-                    .plainListCardRow()
+            if store.session?.isEnded != true {
+                Section {
+                    newHandButton
+                        .plainListCardRow()
+                }
             }
 
             Section {
@@ -205,7 +207,7 @@ struct HomeView: View {
                 .plainListCardRow()
 
                 if store.hands.isEmpty {
-                    EmptyStateView(text: "还没有记录。下一手纠结或有学习价值的牌后，点“记关键牌”。")
+                    EmptyStateView(text: "暂无手牌记录。")
                         .plainListCardRow()
                 } else {
                     ForEach(store.hands) { hand in
@@ -279,14 +281,23 @@ struct HomeView: View {
 
     private func sessionSummary(_ session: ReviewSession) -> some View {
         CardPanel {
-            Text("本次核心目标")
-                .font(.footnote.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH")
+                    .font(.title3.bold())
+                Spacer()
+                Text(session.isEnded ? "已结束" : "记录中")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(session.isEnded ? Color.secondary : Color.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.appSecondaryBackground)
+                    .clipShape(Capsule())
+            }
+
+            Text("\(session.playerCount) 人桌 · \(session.straddles.isEmpty ? "无 straddle" : "有 straddle")")
+                .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("只抓住关键手牌")
-                .font(.title2.bold())
-            Text("大池量、纠结牌、对手读牌；其他牌不打扰。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+
             HStack {
                 Label("\(store.hands.count) 已保存", systemImage: "tray.full")
                 Spacer()
@@ -295,17 +306,9 @@ struct HomeView: View {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
 
-            Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH · 默认 \(session.playerCount) 人桌 · \(session.straddles.isEmpty ? "默认无 straddle" : "默认有 straddle")")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
             Divider()
 
             if session.isEnded {
-                Text("本场已结束，可查看和补复盘；如果这场还要继续打，可以恢复记录。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
                 HStack(spacing: 10) {
                     Button("继续记录本场") {
                         store.resumeCurrentSession()
@@ -328,32 +331,18 @@ struct HomeView: View {
         }
     }
 
-    private var recordEntry: some View {
-        VStack(spacing: 10) {
-            if store.session?.isEnded == true {
-                Text("恢复记录后，新手牌会继续归到这一个 session。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Button {
-                    if let hand = store.createDraft() {
-                        path.append(.quick(hand.id))
-                    }
-                } label: {
-                    Text("＋ 记关键牌")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+    private var newHandButton: some View {
+        Button {
+            if let hand = store.createDraft() {
+                path.append(.quick(hand.id))
             }
-
-            Text("一手结束后打开，先保存，再补完整路线。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
+        } label: {
+            Text("＋ 记关键牌")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 56)
         }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
     }
 }
 
