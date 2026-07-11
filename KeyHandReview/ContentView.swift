@@ -181,6 +181,14 @@ struct HomeView: View {
     @State private var showingEndSessionConfirmation = false
     @State private var handPendingDeletion: PokerHand?
 
+    private var savedHands: [PokerHand] {
+        store.hands.filter(PokerLogic.isSavedHand)
+    }
+
+    private var incompleteHands: [PokerHand] {
+        savedHands.filter(PokerLogic.needsCompletion)
+    }
+
     var body: some View {
         List {
             if let session = store.session {
@@ -206,11 +214,11 @@ struct HomeView: View {
                 }
                 .plainListCardRow()
 
-                if store.hands.isEmpty {
+                if savedHands.isEmpty {
                     EmptyStateView(text: "暂无手牌记录。")
                         .plainListCardRow()
                 } else {
-                    ForEach(store.hands) { hand in
+                    ForEach(savedHands) { hand in
                         Button {
                             path.append(hand.status == .draft ? .route(hand.id) : .detail(hand.id))
                         } label: {
@@ -235,6 +243,9 @@ struct HomeView: View {
         .scrollContentBackground(.hidden)
         .background(Color.appGroupedBackground)
         .navigationTitle("手牌复盘速记")
+        .onAppear {
+            store.removeEmptyDrafts()
+        }
         .confirmationDialog("结束本场？", isPresented: $showingEndSessionConfirmation, titleVisibility: .visible) {
             Button("结束本场") {
                 store.endCurrentSession()
@@ -299,9 +310,9 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
 
             HStack {
-                Label("\(store.hands.count) 已保存", systemImage: "tray.full")
+                Label("\(savedHands.count) 已保存", systemImage: "tray.full")
                 Spacer()
-                Label("\(store.hands.filter { $0.status == .draft }.count) 待补全", systemImage: "pencil.and.list.clipboard")
+                Label("\(incompleteHands.count) 待补全", systemImage: "pencil.and.list.clipboard")
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -359,7 +370,8 @@ struct SessionArchiveRow: View {
     let archive: SessionArchive
 
     private var session: ReviewSession { archive.session }
-    private var draftCount: Int { archive.hands.filter { $0.status == .draft }.count }
+    private var savedHands: [PokerHand] { archive.hands.filter(PokerLogic.isSavedHand) }
+    private var incompleteCount: Int { savedHands.filter(PokerLogic.needsCompletion).count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -376,7 +388,7 @@ struct SessionArchiveRow: View {
                     .clipShape(Capsule())
             }
 
-            Text("\(archive.hands.count) 手牌 · \(draftCount) 待补全 · \(session.playerCount) 人桌\(session.straddles.isEmpty ? "" : " · 有 straddle")")
+            Text("\(savedHands.count) 手牌 · \(incompleteCount) 待补全 · \(session.playerCount) 人桌\(session.straddles.isEmpty ? "" : " · 有 straddle")")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -414,7 +426,7 @@ struct HandRow: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
 
-            Text("\(hand.playerCount) 人桌\(hand.straddles.isEmpty ? "" : " · 有 straddle") · \(PokerLogic.handSummary(hand, session: session)) · \(hand.status == .draft ? "待补全 · 点击继续补行动路线" : "已完成 · 点击查看回放")")
+            Text("\(hand.playerCount) 人桌\(hand.straddles.isEmpty ? "" : " · 有 straddle") · \(PokerLogic.handSummary(hand, session: session)) · \(statusText)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -432,6 +444,13 @@ struct HandRow: View {
         case "自定义": return .secondary
         default: return .blue
         }
+    }
+
+    private var statusText: String {
+        guard PokerLogic.needsCompletion(hand) else {
+            return "已完成 · 点击查看回放"
+        }
+        return hand.status == .draft ? "待补全 · 点击继续补行动路线" : "待补复盘 · 点击查看回放"
     }
 }
 

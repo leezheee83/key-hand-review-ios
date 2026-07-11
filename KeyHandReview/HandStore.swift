@@ -119,6 +119,10 @@ final class HandStore: ObservableObject {
         hands.removeAll { $0.id == id }
     }
 
+    func removeEmptyDrafts() {
+        hands.removeAll { !PokerLogic.hasUserContent($0) }
+    }
+
     private var storeURL: URL {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return directory.appendingPathComponent(storageFileName)

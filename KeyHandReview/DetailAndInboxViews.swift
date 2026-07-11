@@ -228,7 +228,12 @@ struct InboxView: View {
     @State private var copied = false
 
     private var sortedHands: [PokerHand] {
-        store.hands.sorted {
+        store.hands.filter(PokerLogic.isSavedHand).sorted {
+            let lhsNeedsCompletion = PokerLogic.needsCompletion($0)
+            let rhsNeedsCompletion = PokerLogic.needsCompletion($1)
+            if lhsNeedsCompletion != rhsNeedsCompletion {
+                return lhsNeedsCompletion
+            }
             if ($0.status == .draft) != ($1.status == .draft) {
                 return $0.status == .draft
             }
@@ -266,7 +271,7 @@ struct InboxView: View {
                     }
                 }
 
-                let markdown = PokerLogic.markdown(for: store.hands, session: store.session)
+                let markdown = PokerLogic.markdown(for: sortedHands, session: store.session)
                 HStack {
                     Button("复制全部 Markdown") {
                         copy(markdown)

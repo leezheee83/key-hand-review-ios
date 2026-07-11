@@ -17,6 +17,23 @@ enum PokerLogic {
         }
     }
 
+    static func hasUserContent(_ hand: PokerHand) -> Bool {
+        let hasStreetContent = StreetKey.allCases.contains { key in
+            guard let record = hand.streets[key] else { return false }
+            return !record.board.isEmpty || !record.actions.isEmpty || record.potBB != nil
+        }
+        let hasReviewContent = !hand.review.decision.isEmpty || !hand.review.basis.isEmpty || !hand.review.correction.isEmpty
+        return !normalizedHandTags(hand.tags).isEmpty || !hand.heroCards.isEmpty || hasStreetContent || hasReviewContent
+    }
+
+    static func isSavedHand(_ hand: PokerHand) -> Bool {
+        hasUserContent(hand)
+    }
+
+    static func needsCompletion(_ hand: PokerHand) -> Bool {
+        isSavedHand(hand) && completeness(hand) < 100
+    }
+
     static func positions(for playerCount: Int) -> [String] {
         switch playerCount {
         case 4: return ["UTG", "BTN", "SB", "BB"]
