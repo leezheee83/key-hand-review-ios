@@ -417,9 +417,13 @@ struct HandRow: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
-                Text("\(PokerLogic.completeness(hand))%")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text("\(completeness)%")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(completionColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(completionColor.opacity(0.12))
+                    .clipShape(Capsule())
             }
 
             Text("\(PokerLogic.positionLabel(hand.heroPosition)) · \(hand.heroCards.map(\.display).joined(separator: " ").ifEmpty("手牌待补")) · \(PokerLogic.formatAmount(hand.effectiveStackBB, session: session))")
@@ -430,7 +434,8 @@ struct HandRow: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            ProgressView(value: Double(PokerLogic.completeness(hand)), total: 100)
+            ProgressView(value: Double(completeness), total: 100)
+                .tint(completionColor)
         }
     }
 
@@ -451,6 +456,14 @@ struct HandRow: View {
             return "已完成 · 点击查看回放"
         }
         return hand.status == .draft ? "待补全 · 点击继续补行动路线" : "待补复盘 · 点击查看回放"
+    }
+
+    private var completeness: Int {
+        PokerLogic.completeness(hand)
+    }
+
+    private var completionColor: Color {
+        completeness >= 100 ? .green : .orange
     }
 }
 
