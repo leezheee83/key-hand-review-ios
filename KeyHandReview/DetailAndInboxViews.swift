@@ -179,8 +179,9 @@ struct DetailView: View {
                 var updated = hand
                 updated.review = review
                 store.saveHand(updated)
+                path.removeAll()
             } label: {
-                Text("保存复盘")
+                Text("保存并返回首页")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

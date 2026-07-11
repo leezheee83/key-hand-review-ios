@@ -128,6 +128,8 @@ struct SetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+
+                historySection
             }
             .padding()
         }
@@ -149,11 +151,34 @@ struct SetupView: View {
         }
         store.startSession(sb: sbValue, bb: bbValue, currency: currency, unit: unit, playerCount: playerCount, straddles: straddles)
     }
+
+    @ViewBuilder
+    private var historySection: some View {
+        let archives = store.sessionHistory
+        if !archives.isEmpty {
+            CardPanel {
+                SectionTitle(
+                    title: "历史场次",
+                    subtitle: "数据只保存在这台手机的 App 本地；卸载 App 会一并清除。"
+                )
+
+                ForEach(archives) { archive in
+                    Button {
+                        store.openSession(archive.id)
+                    } label: {
+                        SessionArchiveRow(archive: archive)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
 }
 
 struct HomeView: View {
     @EnvironmentObject private var store: HandStore
     @Binding var path: [AppRoute]
+    @State private var showingEndSessionConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -179,20 +204,48 @@ struct HomeView: View {
                         Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH · 默认 \(session.playerCount) 人桌 · \(session.straddles.isEmpty ? "默认无 straddle" : "默认有 straddle")")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        if session.isEnded {
+                            HStack {
+                                Text("本场已结束，可继续查看和补复盘。")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("返回场次列表") {
+                                    store.closeCurrentSession()
+                                    path.removeAll()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        } else {
+                            Button("结束本场") {
+                                showingEndSessionConfirmation = true
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
                 }
 
-                Button {
-                    if let hand = store.createDraft() {
-                        path.append(.quick(hand.id))
+                if store.session?.isEnded == true {
+                    Text("这场已经结束，不再新增手牌。需要新记录时，从场次列表新建一场。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Button {
+                        if let hand = store.createDraft() {
+                            path.append(.quick(hand.id))
+                        }
+                    } label: {
+                        Text("＋ 记关键牌")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 56)
                     }
-                } label: {
-                    Text("＋ 记关键牌")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 56)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
 
                 Text("一手结束后打开，先保存，再补完整路线。")
                     .font(.footnote)
@@ -225,6 +278,15 @@ struct HomeView: View {
         }
         .background(Color.appGroupedBackground)
         .navigationTitle("手牌复盘速记")
+        .confirmationDialog("结束本场？", isPresented: $showingEndSessionConfirmation, titleVisibility: .visible) {
+            Button("结束本场") {
+                store.endCurrentSession()
+                path.removeAll()
+            }
+            Button("继续记录", role: .cancel) { }
+        } message: {
+            Text("结束后会回到场次列表；已记录手牌仍保存在本机，可重新进入查看和补复盘。")
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(store.session?.unit == .bb ? "bb" : "筹码") {
@@ -234,6 +296,39 @@ struct HomeView: View {
                 }
             }
         }
+    }
+}
+
+struct SessionArchiveRow: View {
+    let archive: SessionArchive
+
+    private var session: ReviewSession { archive.session }
+    private var draftCount: Int { archive.hands.filter { $0.status == .draft }.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("\(PokerLogic.trim(session.sb))/\(PokerLogic.trim(session.bb)) NLH")
+                    .font(.headline)
+                Spacer()
+                Text(session.isEnded ? "已结束" : "进行中")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(session.isEnded ? Color.secondary : Color.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.appSecondaryBackground)
+                    .clipShape(Capsule())
+            }
+
+            Text("\(archive.hands.count) 手牌 · \(draftCount) 待补全 · \(session.playerCount) 人桌\(session.straddles.isEmpty ? "" : " · 有 straddle")")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text(session.createdAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
     }
 }
 

@@ -24,37 +24,41 @@ struct RouteEditorView: View {
     var body: some View {
         Group {
             if let hand = store.hand(id: handID) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        header
+                VStack(spacing: 0) {
+                    routeContextBar(hand)
 
-                        Picker("街", selection: $street) {
-                            ForEach(StreetKey.allCases) { key in
-                                Text(key.shortTitle).tag(key)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            header
+
+                            Picker("街", selection: $street) {
+                                ForEach(StreetKey.allCases) { key in
+                                    Text(key.shortTitle).tag(key)
+                                }
                             }
-                        }
-                        .pickerStyle(.segmented)
+                            .pickerStyle(.segmented)
 
-                        if street == .preflop {
-                            preflopTemplates(hand)
-                        } else {
-                            boardPanel(hand)
-                        }
+                            if street == .preflop {
+                                preflopTemplates(hand)
+                            } else {
+                                boardPanel(hand)
+                            }
 
-                        actionConsole(hand)
-                        routePreview(hand)
+                            actionConsole(hand)
+                            routePreview(hand)
 
-                        Button {
-                            next(hand)
-                        } label: {
-                            Text(street == .river ? "完成并查看回放" : "保存本街并继续")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, minHeight: 54)
+                            Button {
+                                next(hand)
+                            } label: {
+                                Text(street == .river ? "完成并查看回放" : "保存本街并继续")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity, minHeight: 54)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
+                        .padding()
                     }
-                    .padding()
                 }
                 .background(Color.appGroupedBackground)
                 .navigationTitle("补路线")
@@ -93,6 +97,74 @@ struct RouteEditorView: View {
                     .padding()
             }
         }
+    }
+
+    private func routeContextBar(_ hand: PokerHand) -> some View {
+        let board = boardCards(in: hand, through: street)
+        let heroCards = hand.heroCards.map(\.display).joined(separator: " ").ifEmpty("手牌待补")
+        let analysis = PokerLogic.streetAnalysis(for: hand, street: street)
+
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(PokerLogic.positionLabel(hand.heroPosition)) \(heroCards)")
+                    .font(.footnote.weight(.bold))
+                    .lineLimit(1)
+
+                HStack(spacing: 5) {
+                    if board.isEmpty {
+                        Text(boardPlaceholder)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(board) { card in
+                            compactCard(card)
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(street.shortTitle)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Text("\(analysis.isEstimated ? "约 " : "")\(PokerLogic.formatAmount(analysis.potBB, session: store.session))")
+                    .font(.footnote.weight(.bold))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.black.opacity(0.08))
+                .frame(height: 1)
+        }
+    }
+
+    private var boardPlaceholder: String {
+        switch street {
+        case .preflop: return "公共牌未发"
+        case .flop: return "Flop □ □ □"
+        case .turn: return "Turn □"
+        case .river: return "River □"
+        }
+    }
+
+    private func compactCard(_ card: PlayingCard) -> some View {
+        Text(card.display)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(card.suit.isRed ? Color.red : Color.primary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
+            )
     }
 
     private var header: some View {
@@ -638,6 +710,16 @@ struct RouteEditorView: View {
             .filter { $0 != currentStreet }
             .flatMap { hand.streets[$0]?.board ?? [] }
         return hand.heroCards + otherBoard
+    }
+
+    private func boardCards(in hand: PokerHand, through currentStreet: StreetKey) -> [PlayingCard] {
+        guard let currentIndex = StreetKey.allCases.firstIndex(of: currentStreet) else { return [] }
+        var board: [PlayingCard] = []
+        for (index, key) in StreetKey.allCases.enumerated() {
+            guard key != .preflop, index <= currentIndex else { continue }
+            board.append(contentsOf: hand.streets[key]?.board ?? [])
+        }
+        return board
     }
 }
 

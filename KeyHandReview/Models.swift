@@ -41,6 +41,16 @@ struct ReviewSession: Codable, Identifiable {
     var playerCount: Int
     var straddles: [Straddle]
     var createdAt = Date()
+    var endedAt: Date?
+
+    var isEnded: Bool { endedAt != nil }
+}
+
+struct SessionArchive: Codable, Identifiable {
+    var session: ReviewSession
+    var hands: [PokerHand]
+
+    var id: UUID { session.id }
 }
 
 enum HandStatus: String, Codable, Hashable {
