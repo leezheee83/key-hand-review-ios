@@ -1,0 +1,19 @@
+.DS_Store
+
+# Xcode user/workspace state
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+DerivedData/
+build/
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# Signing / provisioning artifacts
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.p12
+
