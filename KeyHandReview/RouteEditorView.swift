@@ -12,43 +12,58 @@ struct RouteEditorView: View {
     @State private var amount = ""
     @State private var sheetTarget: RouteActionSheetTarget?
 
+    private static let scrollTopAnchor = "route-editor-top"
+
     var body: some View {
         Group {
             if let hand = store.hand(id: handID) {
                 VStack(spacing: 0) {
                     routeContextBar(hand)
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            header
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            Color.clear
+                                .frame(height: 0)
+                                .id(Self.scrollTopAnchor)
 
-                            Picker("街", selection: $street) {
-                                ForEach(StreetKey.allCases) { key in
-                                    Text(key.shortTitle).tag(key)
+                            VStack(alignment: .leading, spacing: 18) {
+                                header
+
+                                Picker("街", selection: $street) {
+                                    ForEach(StreetKey.allCases) { key in
+                                        Text(key.shortTitle).tag(key)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+
+                                if street == .preflop {
+                                    preflopTemplates()
+                                } else {
+                                    boardPanel(hand)
+                                }
+
+                                actionConsole(hand)
+                                routePreview(hand)
+
+                                Button {
+                                    next(hand)
+                                } label: {
+                                    Text(street == .river ? "完成并查看回放" : "保存本街并继续")
+                                        .font(.headline)
+                                        .frame(maxWidth: .infinity, minHeight: 54)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                            }
+                            .padding()
+                        }
+                        .onChange(of: street) { _ in
+                            DispatchQueue.main.async {
+                                withAnimation(.easeOut(duration: 0.18)) {
+                                    proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
                                 }
                             }
-                            .pickerStyle(.segmented)
-
-                            if street == .preflop {
-                                preflopTemplates()
-                            } else {
-                                boardPanel(hand)
-                            }
-
-                            actionConsole(hand)
-                            routePreview(hand)
-
-                            Button {
-                                next(hand)
-                            } label: {
-                                Text(street == .river ? "完成并查看回放" : "保存本街并继续")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, minHeight: 54)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
                         }
-                        .padding()
                     }
                 }
                 .background(Color.appGroupedBackground)
