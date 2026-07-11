@@ -16,6 +16,105 @@ enum PokerLogic {
         }
     }
 
+    static func clockwisePositions(for playerCount: Int) -> [String] {
+        let positions = positions(for: playerCount)
+        guard let buttonIndex = positions.firstIndex(of: "BTN") else { return positions }
+        return Array(positions[buttonIndex...]) + Array(positions[..<buttonIndex])
+    }
+
+    static func actionOrder(for hand: PokerHand, street: StreetKey) -> [String] {
+        let baseOrder = baseActionOrder(for: hand, street: street)
+        let actionable = Set(actionablePositions(for: hand, street: street))
+        let ordered = baseOrder.filter { actionable.contains($0) }
+        return ordered.isEmpty ? baseOrder : ordered
+    }
+
+    static func nextActor(for hand: PokerHand, street: StreetKey) -> String {
+        let baseOrder = baseActionOrder(for: hand, street: street)
+        let actionable = Set(actionablePositions(for: hand, street: street))
+        guard !baseOrder.isEmpty else { return hand.heroPosition }
+        let activeOrder = baseOrder.filter { actionable.contains($0) }
+        guard !activeOrder.isEmpty else { return hand.heroPosition }
+
+        let actions = hand.streets[street]?.actions ?? []
+        guard let lastActor = actions.last(where: { baseOrder.contains($0.actor) })?.actor else {
+            return activeOrder.first ?? hand.heroPosition
+        }
+        return nextActor(after: lastActor, in: baseOrder, actionable: actionable) ?? (activeOrder.first ?? hand.heroPosition)
+    }
+
+    static func nextActor(after actor: String, hand: PokerHand, street: StreetKey) -> String {
+        let baseOrder = baseActionOrder(for: hand, street: street)
+        let actionable = Set(actionablePositions(for: hand, street: street))
+        return nextActor(after: actor, in: baseOrder, actionable: actionable) ?? nextActor(for: hand, street: street)
+    }
+
+    static func predictedActorForInsertion(at index: Int, hand: PokerHand, street: StreetKey) -> String {
+        var draft = hand
+        var record = draft.streets[street] ?? StreetRecord()
+        let safeIndex = min(max(index, 0), record.actions.count)
+        record.actions = Array(record.actions.prefix(safeIndex))
+        draft.streets[street] = record
+        return nextActor(for: draft, street: street)
+    }
+
+    private static func baseActionOrder(for hand: PokerHand, street: StreetKey) -> [String] {
+        let positions = positions(for: hand.playerCount)
+        guard !positions.isEmpty else { return [] }
+
+        if street == .preflop {
+            guard let straddle = hand.straddles.first,
+                  positions.contains(straddle.position) else {
+                return positions
+            }
+            return rotatedClockwisePositions(for: hand.playerCount, after: straddle.position)
+        }
+
+        return rotatedClockwisePositions(for: hand.playerCount, after: "BTN")
+    }
+
+    private static func rotatedClockwisePositions(for playerCount: Int, after position: String) -> [String] {
+        let clockwise = clockwisePositions(for: playerCount)
+        guard let index = clockwise.firstIndex(of: position) else { return clockwise }
+        let start = clockwise.index(after: index) == clockwise.endIndex ? clockwise.startIndex : clockwise.index(after: index)
+        return Array(clockwise[start...]) + Array(clockwise[..<start])
+    }
+
+    private static func actionablePositions(for hand: PokerHand, street: StreetKey) -> [String] {
+        let positions = positions(for: hand.playerCount)
+        var unavailable = Set<String>()
+        for key in StreetKey.allCases {
+            guard let record = hand.streets[key] else { continue }
+            for action in record.actions {
+                guard positions.contains(action.actor) else { continue }
+                let normalized = action.action.lowercased()
+                if normalized.contains("fold")
+                    || normalized.contains("弃牌")
+                    || normalized.contains("all-in")
+                    || normalized.contains("allin")
+                    || normalized.contains("all in") {
+                    unavailable.insert(action.actor)
+                }
+            }
+            if key == street { break }
+        }
+        return positions.filter { !unavailable.contains($0) }
+    }
+
+    private static func nextActor(after actor: String, in order: [String], actionable: Set<String>) -> String? {
+        guard !order.isEmpty else { return nil }
+        guard let index = order.firstIndex(of: actor) else {
+            return order.first { actionable.contains($0) }
+        }
+        for offset in 1...order.count {
+            let next = order[(index + offset) % order.count]
+            if actionable.contains(next) {
+                return next
+            }
+        }
+        return nil
+    }
+
     static func positionLabel(_ position: String) -> String {
         [
             "UTG": "枪口位（UTG）",
