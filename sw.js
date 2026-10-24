@@ -1,4 +1,4 @@
-const CACHE = "key-hand-review-v14";
+const CACHE = "key-hand-review-v15";
 const BASE = new URL(self.registration.scope);
 const HOME = BASE.pathname;
 const APP_SHELL = ["", "manifest.webmanifest", "icon-192.png", "icon-512.png"].map(
