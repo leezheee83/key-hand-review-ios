@@ -46,6 +46,7 @@ type HandAction = {
   actor: string;
   action: string;
   amountBB?: number;
+  amountScope?: "streetTotal";
   hero: boolean;
 };
 type StreetRecord = {
@@ -87,6 +88,7 @@ const tags = ["待复盘", "诈唬", "抓诈", "Hero Fold", "价值", "冤家", 
 const ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
 const suits: PlayingCard["suit"][] = ["♠", "♥", "♦", "♣"];
 const actionOptions = ["check", "call", "bet", "raise", "fold", "all-in"];
+const actionLabels: Record<string, string> = { check: "过牌", call: "跟注", bet: "下注", raise: "加注", fold: "弃牌", "all-in": "全下", unknown: "动作待补" };
 
 const emptySnapshot: StoreSnapshot = { activeSessionID: null, archives: [] };
 
@@ -221,7 +223,27 @@ function chipText(valueBB: number, bigBlind: number) {
 }
 
 function actionText(action: HandAction, bigBlind: number) {
-  return `${action.actor} ${action.action}${action.amountBB == null ? "" : ` ${chipText(action.amountBB, bigBlind)}`}`;
+  const needsAmount = ["call", "bet", "raise", "all-in"].includes(action.action);
+  return `${action.actor} ${actionLabels[action.action] ?? action.action}${action.amountBB == null ? needsAmount ? " · 金额待补" : "" : `${action.amountScope === "streetTotal" ? "至" : " "}${chipText(action.amountBB, bigBlind)}`}`;
+}
+
+type ReplayStep = { street: StreetKey; kind: "start" | "action" | "end"; action?: HandAction };
+
+function replaySteps(hand: PokerHand): ReplayStep[] {
+  const steps: ReplayStep[] = [{ street: "preflop", kind: "start" }];
+  for (const street of streets) {
+    const record = hand.streets[street];
+    if (street !== "preflop" && (record.board.length || record.actions.length || record.potBB != null)) steps.push({ street, kind: "start" });
+    for (const action of record.actions) steps.push({ street, kind: "action", action });
+    if (record.potBB != null) steps.push({ street, kind: "end" });
+  }
+  return steps;
+}
+
+function replayBoard(hand: PokerHand, street: StreetKey) {
+  return streets.slice(1, streets.indexOf(street) + 1).flatMap((key) =>
+    Array.from({ length: key === "flop" ? 3 : 1 }, (_, index): PlayingCard | null => hand.streets[key].board[index] ?? null),
+  );
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -518,19 +540,21 @@ export default function HandReviewApp() {
 
       {screen === "route" && editingHand && archive && (
         <RouteScreen
+          key={`${editingHand.id}-${street}`}
           hand={editingHand}
           bigBlind={archive.session.bb}
           street={street}
+          saveState={saveState}
           onEditBasics={() => setScreen("quick")}
           onStreet={setStreet}
           onChange={(hand) => {
             setEditingHand(hand);
             saveHand(hand);
           }}
-          onFinish={() => {
+          onFinish={async () => {
             const hand = { ...editingHand, status: "complete" as const };
             setEditingHand(hand);
-            saveHand(hand);
+            if (!await saveHand(hand)) return;
             setScreen("detail");
           }}
         />
@@ -1505,18 +1529,20 @@ function CompactHandPicker({ selected, onChange }: {
   );
 }
 
-function RouteScreen({ hand, bigBlind, street, onStreet, onChange, onFinish, onEditBasics }: {
+function RouteScreen({ hand, bigBlind, street, saveState, onStreet, onChange, onFinish, onEditBasics }: {
   hand: PokerHand;
   bigBlind: number;
   street: StreetKey;
+  saveState: string;
   onStreet: (street: StreetKey) => void;
   onChange: (hand: PokerHand) => void;
   onFinish: () => void;
   onEditBasics: () => void;
 }) {
   const [actor, setActor] = useState(hand.heroPosition);
-  const [action, setAction] = useState("check");
+  const [action, setAction] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
+  const [error, setError] = useState("");
   const record = hand.streets[street];
   const blocked = [
     ...hand.heroCards,
@@ -1528,21 +1554,34 @@ function RouteScreen({ hand, bigBlind, street, onStreet, onChange, onFinish, onE
     onChange({ ...hand, streets: { ...hand.streets, [street]: next } });
   };
 
+  const appendAction = (kind: string, amountValue = "") => {
+    if (amountValue !== "" && (!(Number(amountValue) > 0) || !Number.isFinite(Number(amountValue)))) {
+      setError("请输入大于 0 的筹码金额，或选择金额待补。");
+      return;
+    }
+    const next: HandAction = { id: uid(), actor, action: kind, hero: actor === hand.heroPosition };
+    if (amountValue !== "") { next.amountBB = bbFromChips(Number(amountValue), bigBlind); next.amountScope = "streetTotal"; }
+    setRecord({ ...record, actions: [...record.actions, next] });
+    setAction(null); setAmount(""); setError("");
+  };
+
   return (
     <section className="screen">
       <div className="route-context">
-        <div><small>HERO</small><strong>{hand.heroCards.map(cardText).join(" ")}</strong></div>
+        <div><small>我的底牌</small><strong>{hand.heroCards.map(cardText).join(" ") || "待补"}</strong></div>
         <div><small>当前街</small><strong>{streetLabels[street]}</strong></div>
         <div><small>底池</small><strong>{record.potBB == null ? "待补" : chipText(record.potBB, bigBlind)}</strong></div>
       </div>
       {hand.note && <p className="hand-note">{hand.note}</p>}
       <div className="utility-row"><button onClick={onEditBasics}>修改底牌 / 笔记</button><button onClick={onFinish}>直接进入复盘</button></div>
+      <p className="draft-status" role="status">{saveState}</p>
       <div className="street-tabs">
         {streets.map((key) => <button key={key} className={street === key ? "active" : ""} onClick={() => onStreet(key)}>{streetLabels[key]}</button>)}
       </div>
 
       {boardLimit > 0 && (
-        <article className="panel">
+        <details className="panel board-disclosure">
+          <summary>{streetLabels[street]} 公共牌 · {record.board.map(cardText).join(" ") || "待补"}<span>选择 / 修改</span></summary>
           <FieldTitle title={`${streetLabels[street]} 公共牌`} note={`${record.board.length}/${boardLimit}`} />
           <CardPicker
             selected={record.board}
@@ -1550,40 +1589,50 @@ function RouteScreen({ hand, bigBlind, street, onStreet, onChange, onFinish, onE
             blocked={blocked.filter((card) => !record.board.some((item) => cardText(item) === cardText(card)))}
             onChange={(board) => setRecord({ ...record, board })}
           />
-        </article>
+        </details>
       )}
 
       <article className="panel action-panel">
-        <div className="section-heading"><div><span className="step">ACTION</span><h2>行动顺序</h2></div></div>
-        <div className="field-grid two">
-          <label>位置<select value={actor} onChange={(e) => setActor(e.target.value)}>{positions(hand.playerCount).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>动作<select value={action} onChange={(e) => setAction(e.target.value)}>{actionOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <div className="section-heading"><h2>记录行动</h2><button className="text-button" disabled={!record.actions.length} onClick={() => {
+          const last = record.actions[record.actions.length - 1];
+          setRecord({ ...record, actions: record.actions.slice(0, -1) });
+          if (last) setActor(last.actor);
+          setAction(null); setAmount(""); setError("");
+        }}>撤销上一步</button></div>
+        <div className="actor-focus"><span>当前行动者</span><strong>{actor}{actor === hand.heroPosition ? " · 我" : ""}</strong><small>手动选择位置，可跳记关键动作</small></div>
+        {record.actions.length > 0 && <p className="last-action" role="status">已记：{actionText(record.actions[record.actions.length - 1], bigBlind)}。下一步可切换位置。</p>}
+        <div className="choice-row wrap actor-choices" aria-label="选择行动者">
+          {positions(hand.playerCount).map((position) => <button key={position} aria-pressed={actor === position} className={actor === position ? "choice selected" : "choice"} onClick={() => { setActor(position); setAction(null); setAmount(""); setError(""); }}>{position}{position === hand.heroPosition ? " · 我" : ""}</button>)}
         </div>
-        <label>金额（筹码，可留空）<input inputMode="decimal" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
-        <button
-          className="primary wide"
-          onClick={() => {
-            const nextAction: HandAction = { id: uid(), actor, action, hero: actor === hand.heroPosition };
-            if (amount !== "") nextAction.amountBB = bbFromChips(Number(amount), bigBlind);
-            setRecord({ ...record, actions: [...record.actions, nextAction] });
-            setAmount("");
-          }}
-        >
-          记录动作
-        </button>
+        <div className="action-buttons" aria-label="选择动作">
+          {actionOptions.map((kind) => <button key={kind} aria-pressed={action === kind} className={action === kind ? "action-button selected" : "action-button"} onClick={() => {
+            if (kind === "check" || kind === "fold") appendAction(kind);
+            else { setAction(kind); setAmount(""); setError(""); }
+          }}>{actionLabels[kind]}</button>)}
+        </div>
+        {action && <div className="action-amount-panel">
+          <label>{actor} {actionLabels[action]}至（筹码）<input autoFocus inputMode="decimal" type="number" min="0" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="本街累计投入，不是本次追加金额" onKeyDown={(event) => { if (event.key === "Enter" && amount !== "") appendAction(action, amount); }} /></label>
+          <p className="field-hint">例如先投入 20，再加注到 100，填写 100。</p>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="button-pair"><button className="secondary" onClick={() => appendAction(action)}>金额待补</button><button className="primary" disabled={amount === ""} onClick={() => appendAction(action, amount)}>确认{actionLabels[action]}</button></div>
+        </div>}
+        <button className="text-button wide" onClick={() => appendAction("unknown")}>这一步记不清，标为待补</button>
 
         {record.actions.length > 0 && (
           <ol className="timeline">
             {record.actions.map((item, index) => (
               <li key={item.id}>
-                <span>{index + 1}</span><b>{actionText(item, bigBlind)}</b>
+                <span>{index + 1}</span><b>{actionText(item, bigBlind)}{item.hero ? " · 我" : ""}</b>
                 <button onClick={() => setRecord({ ...record, actions: record.actions.filter((actionItem) => actionItem.id !== item.id) })}>删除</button>
               </li>
             ))}
           </ol>
         )}
 
-        <label>本街结束底池（筹码）<input inputMode="decimal" type="number" value={record.potBB == null ? "" : chipsFromBB(record.potBB, bigBlind)} onChange={(e) => setRecord({ ...record, potBB: e.target.value === "" ? undefined : bbFromChips(Number(e.target.value), bigBlind), confidence: "exact" })} /></label>
+        <details className="optional-section"><summary>本街结束底池 · {record.potBB == null ? "可选" : chipText(record.potBB, bigBlind)}</summary><label>本街结束底池（筹码）<input inputMode="decimal" type="number" min="0" value={record.potBB == null ? "" : chipsFromBB(record.potBB, bigBlind)} onChange={(e) => {
+          if (e.target.value !== "" && (!Number.isFinite(Number(e.target.value)) || Number(e.target.value) < 0)) return;
+          setRecord({ ...record, potBB: e.target.value === "" ? undefined : bbFromChips(Number(e.target.value), bigBlind), confidence: "exact" });
+        }} /></label></details>
       </article>
 
       <button
@@ -1600,6 +1649,33 @@ function RouteScreen({ hand, bigBlind, street, onStreet, onChange, onFinish, onE
   );
 }
 
+function HandReplay({ hand, bigBlind }: { hand: PokerHand; bigBlind: number }) {
+  const steps = replaySteps(hand);
+  const [cursor, setCursor] = useState(0);
+  const index = Math.min(cursor, steps.length - 1);
+  const step = steps[index];
+  const board = replayBoard(hand, step.street);
+  const record = hand.streets[step.street];
+  const summary = step.action ? actionText(step.action, bigBlind) : step.kind === "end" ? `${streetLabels[step.street]}结束 · 底池 ${chipText(record.potBB!, bigBlind)}` : `${streetLabels[step.street]}开始`;
+  return <article className="panel hand-replayer" aria-label="手牌逐步回放">
+    <div className="section-heading"><h2>手牌回放</h2><span className="local-chip">{index + 1} / {steps.length}</span></div>
+    <div className="street-tabs" aria-label="跳转到街">
+      {streets.map((street) => <button key={street} className={step.street === street ? "active" : ""} disabled={!steps.some((item) => item.street === street)} onClick={() => setCursor(steps.findIndex((item) => item.street === street))}>{streetLabels[street]}</button>)}
+    </div>
+    <div className="replay-frame">
+      <div className="replay-hero"><small>我的底牌 · {hand.heroPosition}</small><strong>{hand.heroCards.map(cardText).join(" ") || "底牌待补"}</strong></div>
+      <div className="replay-board" aria-label="当前公共牌">
+        {board.length ? board.map((card, i) => <span key={i} aria-label={card ? cardText(card) : "公共牌待补"} className={card?.suit === "♥" || card?.suit === "♦" ? "replay-card red-card-text" : "replay-card"}>{card ? cardText(card) : "?"}</span>) : <span className="board-placeholder">翻前 · 尚无公共牌</span>}
+      </div>
+      <div className="replay-current" aria-live="polite"><small>{step.action ? `${step.action.actor}${step.action.hero ? " · 我" : ""}` : streetLabels[step.street]}</small><strong>{summary}</strong></div>
+    </div>
+    <label className="replay-progress">回放进度<input aria-label="回放进度" type="range" min="0" max={steps.length - 1} value={index} disabled={steps.length === 1} onChange={(event) => setCursor(Number(event.target.value))} /></label>
+    <div className="button-pair"><button className="secondary" disabled={index === 0} onClick={() => setCursor(index - 1)}>← 上一步</button><button className="primary" disabled={index === steps.length - 1} onClick={() => setCursor(index + 1)}>下一步 →</button></div>
+    <p className="field-hint">只回放已记录的步骤；未记录的动作和底池不作推算。</p>
+    <details className="optional-section"><summary>步骤目录 · 点选跳转</summary><ol className="replay-step-list">{steps.map((item, i) => <li key={i}><button className={i === index ? "selected" : ""} aria-current={i === index ? "step" : undefined} onClick={() => setCursor(i)}>{i + 1}. {streetLabels[item.street]} · {item.action ? actionText(item.action, bigBlind) : item.kind === "end" ? "结束底池" : "开始"}</button></li>)}</ol></details>
+  </article>;
+}
+
 function DetailScreen({ hand, session, onChange, onEditRoute, onSave, onEditBasics }: {
   hand: PokerHand;
   session: ReviewSession;
@@ -1610,10 +1686,12 @@ function DetailScreen({ hand, session, onChange, onEditRoute, onSave, onEditBasi
 }) {
   return (
     <section className="screen">
-      <PageHeading kicker={hand.tags.join(" · ") || "HAND REVIEW"} title={`${hand.heroPosition} · ${hand.heroCards.map(cardText).join(" ")}`} subtitle={`${session.sb}/${session.bb} NLH · 有效后手 ${chipText(hand.effectiveStackBB, session.bb)}`} />
+      <PageHeading kicker={hand.tags.join(" · ") || "HAND REVIEW"} title={`${hand.heroPosition} · ${hand.heroCards.map(cardText).join(" ") || "底牌待补"}`} subtitle={`${session.sb}/${session.bb} NLH · 有效后手 ${chipText(hand.effectiveStackBB, session.bb)}`} />
+      <HandReplay key={hand.id} hand={hand} bigBlind={session.bb} />
       <article className="panel replay">
         {hand.note && <p className="hand-note">现场笔记：{hand.note}</p>}
         <button className="text-button" onClick={onEditBasics}>修改底牌 / 笔记</button>
+        <details className="optional-section"><summary>查看完整行动记录</summary>
         {streets.map((street) => {
           const record = hand.streets[street];
           if (!record.actions.length && !record.board.length) return null;
@@ -1625,6 +1703,7 @@ function DetailScreen({ hand, session, onChange, onEditRoute, onSave, onEditBasi
             </div>
           );
         })}
+        </details>
         <button className="secondary wide" onClick={onEditRoute}>修改行动路线</button>
       </article>
       <article className="panel">

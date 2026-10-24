@@ -86,7 +86,7 @@ test("ships device-local persistence, migration, and offline assets", async () =
   assert.match(client, /if \(!await saveHand\(savedHand\)\) return/);
   assert.doesNotMatch(client, /completeness\(/);
   assert.match(client, /有效后手（筹码）/);
-  assert.match(client, /金额（筹码，可留空）/);
+  assert.match(client, /本街累计投入，不是本次追加金额/);
   assert.match(client, /本街结束底池（筹码）/);
   assert.match(client, /UTG 2×大盲/);
   assert.match(client, /鱿鱼游戏/);

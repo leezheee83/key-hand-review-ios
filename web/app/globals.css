@@ -334,6 +334,33 @@ textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
 .live-actions .section-heading { margin-bottom: 12px; }
 .quick-panel textarea { min-height: 64px; }
 
+.actor-focus { display: grid; gap: 5px; padding: 14px; margin-bottom: 14px; border-radius: 14px; background: var(--mint); }
+.actor-focus > span, .actor-focus small { color: var(--muted); font-size: 12px; }
+.actor-focus strong { font-size: 22px; color: var(--green); }
+.actor-choices { margin-bottom: 16px; }
+.last-action { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.action-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.action-button { min-height: 52px; border-radius: 13px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-weight: 700; }
+.action-button.selected { background: var(--green); border-color: var(--green); color: white; }
+.action-amount-panel { margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; }
+.board-disclosure summary { cursor: pointer; font-size: 14px; line-height: 1.7; }
+.board-disclosure summary > span { display: block; color: var(--muted); font-size: 11px; }
+.board-disclosure[open] summary { margin-bottom: 14px; }
+.replay-frame { padding: 18px 14px; margin: 14px 0; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
+.replay-hero { display: grid; gap: 8px; }
+.replay-hero small, .replay-current small { color: var(--muted); font-size: 12px; }
+.replay-hero strong { font-size: 22px; }
+.replay-board { min-height: 80px; display: flex; align-items: center; gap: 5px; padding-block: 14px; }
+.replay-card { min-width: 40px; min-height: 50px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 18px; font-weight: 700; }
+.board-placeholder { color: var(--muted); font-size: 13px; }
+.replay-current { display: grid; gap: 7px; min-height: 75px; padding-top: 14px; border-top: 1px solid var(--line); }
+.replay-current strong { font-size: 19px; overflow-wrap: anywhere; }
+.replay-progress { font-size: 12px; color: var(--muted); }
+.replay-progress input { width: 100%; min-height: 40px; padding: 0; accent-color: var(--green); }
+.replay-step-list { padding: 0; margin: 0; list-style: none; }
+.replay-step-list button { width: 100%; min-height: 44px; text-align: left; border: 0; border-radius: 8px; padding: 9px; background: transparent; color: var(--ink); font-size: 13px; }
+.replay-step-list button.selected { background: var(--mint); }
+
 .settled-strip {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

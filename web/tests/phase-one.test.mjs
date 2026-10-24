@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const require = createRequire(import.meta.url);
 const source = await readFile(new URL("../app/HandReviewApp.tsx", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source + "\nexport { StartScreen, QuickScreen, SettlementScreen, handState, totalBuyIn, saveSnapshot };", {
+const compiled = ts.transpileModule(source + "\nexport { StartScreen, QuickScreen, SettlementScreen, RouteScreen, HandReplay, actionText, replaySteps, replayBoard, handState, totalBuyIn, saveSnapshot };", {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 function load(indexedDB) {
@@ -68,4 +68,45 @@ test("storage resolves only after transaction completion and rejects transaction
     if (outcome === "complete") { transaction.oncomplete(); await pending; assert.equal(resolved, true); }
     else { const rejected = assert.rejects(pending, /本机存储已中止/); transaction.onabort(); await rejected; }
   }
+});
+
+const recordedHand = { ...hand, streets: {
+  preflop: { board: [], actions: [{ id: "a1", actor: "CO", action: "raise", amountBB: 10, amountScope: "streetTotal", hero: true }], potBB: 25 },
+  flop: { board: [{ rank: "A", suit: "♠" }, { rank: "K", suit: "♥" }, { rank: "2", suit: "♣" }], actions: [{ id: "a2", actor: "BB", action: "check", hero: false }] },
+  turn: { board: [], actions: [{ id: "a3", actor: "CO", action: "unknown", hero: true }] },
+  river: { board: [{ rank: "Q", suit: "♦" }], actions: [] },
+} };
+
+test("recording presents direct actions, actor selection, undo and explicit unknown action", () => {
+  const html = renderToStaticMarkup(React.createElement(app.RouteScreen, { hand: recordedHand, bigBlind: 10, street: "preflop", saveState: "已保存到本机", onStreet: noop, onChange: noop, onFinish: noop, onEditBasics: noop }));
+  assert.doesNotMatch(html, /<select/);
+  for (const label of ["过牌", "跟注", "下注", "加注", "弃牌", "全下", "撤销上一步", "当前行动者", "这一步记不清"]) assert.ok(html.includes(label));
+  assert.match(html, /CO 加注至100 筹码/);
+});
+
+test("replay orders street transitions and only exposes cards through the current street", () => {
+  const steps = app.replaySteps(recordedHand);
+  assert.equal(steps[0].kind, "start");
+  assert.equal(steps[1].action.id, "a1");
+  assert.equal(steps[2].kind, "end");
+  assert.equal(steps[3].street, "flop");
+  assert.equal(app.replayBoard(recordedHand, "preflop").length, 0);
+  assert.equal(app.replayBoard(recordedHand, "flop").length, 3);
+  const turn = app.replayBoard(recordedHand, "turn");
+  assert.equal(turn.length, 4);
+  assert.equal(turn[3], null);
+  const river = app.replayBoard(recordedHand, "river");
+  assert.equal(river[3], null);
+  assert.equal(river[4].rank, "Q");
+  const html = renderToStaticMarkup(React.createElement(app.HandReplay, { hand: recordedHand, bigBlind: 10 }));
+  assert.match(html, /翻前 · 尚无公共牌/);
+  assert.doesNotMatch(html, /Q♦/);
+  assert.match(html, /回放进度/);
+});
+
+test("new totals are labeled explicitly without reinterpreting legacy amounts", () => {
+  const action = { actor: "CO", action: "raise", amountBB: 10 };
+  assert.equal(app.actionText(action, 10), "CO 加注 100 筹码");
+  assert.equal(app.actionText({ ...action, amountScope: "streetTotal" }, 10), "CO 加注至100 筹码");
+  assert.equal(app.actionText({ actor: "BB", action: "call" }, 10), "BB 跟注 · 金额待补");
 });
